@@ -42,9 +42,12 @@ docs, or posts.
    within about 1 ms, with or without network time.
 2. **Snapshots and events.** A snapshot every 100 ms gives the continuous
    picture; an event record written at once gives the exact time.
-3. **The real-time daemon only appends.** A separate low-priority program
-   serves the file over HTTP and flushes it to the SD card, so neither
-   downloads nor SD card writes can delay heartbeats.
+3. **The real-time daemon never touches the file.** It sends each record
+   to `rc-logd` over a non-blocking local datagram socket. `rc-logd` writes,
+   flushes, and serves the file. A write to a busy SD card can block any
+   process for seconds (measured: 3.4 s and 3.7 s during a 300 MB copy,
+   which caused a handover when the daemon wrote the file itself), so file
+   I/O stays out of the real-time process.
 4. **A local web viewer on the Mac.** Python standard library and one HTML
    page with inline script; no external packages, no internet access.
 
@@ -106,33 +109,39 @@ controller time since that STATUS arrived. Before the first STATUS, the
 | 12 | BIT item changed | item << 8 \| result |
 | 13 | TCP output command | action << 8 \| LED value |
 | 14 | slot learned | slot |
+| 15 | log dropped | records the daemon could not hand to `rc-logd` |
 
 ## Ring file
 
 - Path `/var/lib/rc-central/rc-log.bin`, 163,840 slots of 64 bytes
   (10 MiB); about 4.5 hours at 10 snapshots per second plus events.
-- The daemon's systemd unit gets `StateDirectory=rc-central`, which
-  creates `/var/lib/rc-central` before the daemon starts.
-- Record `seq` is written to slot `seq mod 163840` with one `pwrite` of 64
-  bytes. The daemon never calls `fsync`.
-- At start the daemon reads the whole file once, takes the highest valid
+- `rc-logd`'s systemd unit gets `StateDirectory=rc-central`, which creates
+  `/var/lib/rc-central`, and `RuntimeDirectory=rc-logd` for the socket
+  `/run/rc-logd/log.sock`.
+- The daemon encodes each record with `seq` 0 and sends it with
+  `MSG_DONTWAIT`. `rc-logd` stamps the next `seq` and writes the record to
+  slot `seq mod 163840` with one `pwrite` of 64 bytes.
+- If a send fails (socket buffer full, `rc-logd` not running), the daemon
+  counts the record as dropped and reports the failure once. On the next
+  successful send it writes a "log dropped" event with the count. Control
+  never waits for logging.
+- At start `rc-logd` reads the whole file once, takes the highest valid
   `seq`, and continues with the next one. Records with a wrong magic,
   version, or CRC are ignored. A missing or short file is extended to full
-  size; missing slots read as invalid.
-- A write error is logged once and the daemon keeps controlling; logging
-  is never allowed to stop control.
+  size; missing slots read as invalid. A write error is reported once.
 
 ## Log server (`rc-logd`)
 
-- Python 3 standard library, systemd unit with `Nice=10` and
-  `IOSchedulingClass=idle`, port 8080 on every interface.
+- Python 3 standard library, systemd unit with `Nice=10` and the lowest
+  best-effort I/O priority, port 8080 on every interface.
+- Receives record datagrams on `/run/rc-logd/log.sock`; invalid ones are
+  reported once and ignored.
 - `GET /log`: the whole file as `application/octet-stream`.
 - `GET /info`: JSON `{"size": ..., "records": ..., "max_seq": ...}`
   (valid records and the highest seq).
-- Every 2 s it calls `fsync` on the log file, which writes out the
-  daemon's cached records too. On power loss at most about the last 2 s
-  are lost.
-- If it stops, logging continues; only downloads and the 2 s flush stop.
+- Every 2 s it calls `fsync` on the log file. On power loss at most about
+  the last 2 s are lost.
+- If it stops, control continues and the daemon counts dropped records.
 
 ## Viewer (`tools/rcview.py`)
 
@@ -164,18 +173,18 @@ controller time since that STATUS arrived. Before the first STATUS, the
 |---|---|---|
 | `common/proto.c` | `io_time_ms` in STATUS | yes |
 | `common/logrec.c` | encode, decode, and CRC of one record | yes |
-| `central/src/logstore.c` | ring file: open, resume, append | yes (temporary file) |
 | `central/src/role.c` | I/O card time at a given moment | yes |
-| `central/src/main.c` | snapshots every 100 ms, event records | no (board) |
+| `central/src/main.c` | snapshots every 100 ms, event records, send to `rc-logd` | no (board) |
 | `io-card/src/main.c` | fill `io_time_ms` | no (board) |
-| `central/rc-logd.py` and unit | serve and flush the log | yes (local server) |
+| `central/rc_logd.py` and unit | receive, write, flush, and serve the log | yes (temporary files, local socket and server) |
 | `tools/rcview.py` | download, decode, merge, page, CSV | yes |
 
 ## Verification
 
 Host tests are written first: STATUS round trip with the new field; record
 round trip, CRC, bad magic and version, BIT packing; ring append, wrap,
-resume, corrupt slot, missing file; I/O card time estimate; decoding a log
+resume, corrupt slot, short file (in `rc-logd`); records received on the
+socket; I/O card time estimate; decoding a log
 written by the C code (so C and Python formats cannot drift); merging,
 segments, and CSV; the log server's `/info` and `/log`.
 
@@ -191,6 +200,10 @@ Bench experiments, one run each, results in `docs/test-log.md`:
    reboots, its log ends no more than about 2 s before the handover.
 4. **Download under load:** download both full logs five times in a row
    while the system runs. Pass: no `loop_timing` failure, no role change.
+
+5. **SD card stress:** copy 300 MB to the Active controller's SD card
+   while the system runs. Pass: no `loop_timing` failure, no role change,
+   no dropped records.
 
 A viewer screenshot for the post is taken during experiment 2. Both
 controllers still report under-voltage; results carry that note.
