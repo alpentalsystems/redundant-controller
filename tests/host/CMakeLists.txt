@@ -35,3 +35,5 @@ add_test(NAME bit COMMAND test_bit)
 add_executable(test_cmd test_cmd.c ${REPO}/central/src/cmd.c ${REPO}/central/src/bit.c)
 target_include_directories(test_cmd PRIVATE ${REPO}/common/include ${REPO}/central/src)
 add_test(NAME cmd COMMAND test_cmd)
+
+add_test(NAME rcctl COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_rcctl.py)
