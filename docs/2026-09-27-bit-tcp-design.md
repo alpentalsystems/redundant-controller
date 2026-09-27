@@ -74,7 +74,7 @@ frames is kept. Payloads stay little-endian and within 16 bytes.
 | 0 | I/O card link | a valid STATUS within the last 100 ms, and fewer than 5 CRC or length errors in the last 1 s | yes |
 | 1 | Control loop timing | no heartbeat interval over 50 ms since the last check | yes |
 | 2 | Cross-link | a PEER message within the last 100 ms | no |
-| 3 | Supply voltage | `vcgencmd get_throttled` bit 0 (under-voltage now) is clear | no |
+| 3 | Supply voltage | `in0_lcrit_alarm` of the `rpi_volt` hwmon device is 0 (same flag as `vcgencmd get_throttled` bit 0, read without blocking) | no |
 | 4 | CPU temperature | below 80 C (`/sys/class/thermal/thermal_zone0/temp`) | no |
 
 - Each item reports pass, fail, or error, plus its measured value. Error
@@ -109,16 +109,19 @@ Active, and logs every change of `io_fail` on its console.
 
 | Situation | Decision |
 |---|---|
-| Election at the end of the window | reported Active and healthy -> healthy A -> healthy B -> present A -> present B |
+| Election at the end of the window | reported Active and healthy -> healthy -> reported Active -> present (slot A first at each step) |
 | Active lost (heartbeat timeout) | the other slot if present, healthy or not (unchanged) |
-| Active present but unhealthy, other present and healthy | move Active to the other slot |
+| Active present but unhealthy, other present and healthy, for 1.2 s without a break | move Active to the other slot |
 | Active unhealthy, other absent or unhealthy | keep the current Active |
 | Unhealthy slot recovers | no fallback: it stays Standby |
 
-Timing target for an unhealthy handover: the fault becomes visible to the
-controller's BIT within 100 ms, the next check runs within 1 s, the next
-heartbeat carries it within 20 ms, and the I/O card switches on that
-heartbeat. Goal: under 1.5 s from the fault.
+The 1.2 s hold covers common-mode faults: after an I/O card restart or
+stall both controllers turn unhealthy and recover up to one BIT period
+apart, and neither may take Active from the other in that time.
+
+Timing target for an unhealthy handover: up to 1.1 s for the controller's
+BIT to see the fault, the 1.2 s hold, and one heartbeat. Goal: under 2.5 s
+from the fault.
 
 ## Test mode
 
@@ -146,7 +149,7 @@ CRLF endings, leading and trailing spaces ignored, commands case-sensitive.
 | `BIT` | reply | reply | reply |
 | `LEDS <hex>` (0x00-0xFF) | `operational mode` error | sets the operator mask | `not active` error |
 | `LAMP_TEST` | `operational mode` error | runs the lamp test | `not active` error |
-| `RUN_BIT` | `operational mode` error | runs controller BIT now and sends RUN_BIT | `not active` error |
+| `RUN_BIT` | `operational mode` error | runs controller BIT now, sends RUN_BIT, replies ok; the client then reads BIT | `not active` error |
 | other | `unknown command` error | same | same |
 
 Replies (one line each):
@@ -203,7 +206,7 @@ Bench experiments, 3 runs each, results in `docs/test-log.md`:
 1. **PBIT:** boot both controllers; both report PBIT results; supply
    voltage shows fail (non-critical) on the current bench.
 2. **Unhealthy handover:** disconnect the Active controller's RX wire (I/O
-   card to controller). Pass: the Standby becomes Active within 1.5 s;
+   card to controller). Pass: the Standby becomes Active within 2.5 s;
    after reconnecting, the controller is healthy again after about 3 s and
    stays Standby.
 3. **Test mode:** press USER; `rcctl leds 0x55` lights alternate LEDs;
@@ -211,6 +214,9 @@ Bench experiments, 3 runs each, results in `docs/test-log.md`:
    chaser resumes and `rcctl leds 0x0f` is refused.
 4. **I/O card BIT:** remove the loopback jumper. Pass: `io_fail` bit 0 is
    set within 1 s and no role changes.
+5. **I/O card restart (regression):** hold the STM32 in reset for 3 s
+   with OpenOCD while the system runs. Pass: no role change; both
+   controllers report unhealthy, then healthy again.
 
 Both controllers still report under-voltage; timing results carry that
 note.
