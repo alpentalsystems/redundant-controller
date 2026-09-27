@@ -145,9 +145,10 @@ controller time since that STATUS arrived. Before the first STATUS, the
   counted.
 - **Segments:** within one controller's log, ordered by `seq`, a drop in
   `io_time_ms` of more than 1 s starts a new segment (I/O card restart).
-  Segments from both logs are matched by wall-clock time (nearest start
-  within 10 s). Records without a valid `io_time_ms` go into the segment
-  of the next valid record.
+  Records without a valid `io_time_ms` go into the segment of the next
+  valid record. Each segment's I/O card boot time is estimated as the
+  median of `wall_ms - io_time_ms`; segments from the two logs whose boot
+  times differ by at most 10 s are the same I/O card run and merge.
 - **Merge:** within a segment, rows are ordered by `io_time_ms`, then by
   controller, then by `seq`.
 - **Page:** segment selector, time range, filters (controller, snapshots
