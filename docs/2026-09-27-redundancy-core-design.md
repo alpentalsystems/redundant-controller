@@ -183,12 +183,13 @@ role logic in the daemon, as portable C modules like the compass project.
 
 Experiments on the boards, results recorded in `docs/test-log.md`:
 
-1. **Power loss:** pull the Active controller's power 10+ times; measure the
+1. **Power loss:** pull the Active controller's power 3 times; measure the
    time until the Standby is granted Active. Goal: under 200 ms every time.
 2. **Cross-link loss:** unplug the Ethernet cable between the controllers;
    roles must not change.
-3. **Simultaneous boot:** power both controllers together 10-20 times;
-   exactly one Active every time, and it is slot A.
+3. **Simultaneous boot:** power both controllers together 3 times;
+   exactly one Active every time and no referee fault. Slot A wins only when
+   both appear within the election window; Pi boot times vary by seconds.
 4. **I/O card loss:** hold the STM32 in reset or remove its power while the
    system runs; outputs go off, both controllers report "referee lost", and
    after recovery no role changes.

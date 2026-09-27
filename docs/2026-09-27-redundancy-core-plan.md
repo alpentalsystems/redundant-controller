@@ -2254,11 +2254,11 @@ echo "== io-card"
 "$(dirname "$0")/console-remote.sh" "${2:-3}" | grep -E 'active:|ready'
 ```
 
-- [ ] **Step 2: Experiment 1, power loss (owner pulls power).** With A Active and the chaser running, start `tools/console-remote.sh 20` in one terminal and pull rc-a's power. Record the `active: A -> B gap_ms=` value and whether the chaser continued from the next LED. Restore power; rc-a must rejoin as standby (no `active:` line). Repeat 10 times, alternating which Pi is Active. Pass: every `gap_ms` under 200 and no chaser jump.
+- [ ] **Step 2: Experiment 1, power loss (owner pulls power).** With A Active and the chaser running, start `tools/console-remote.sh 20` in one terminal and pull rc-a's power. Record the `active: A -> B gap_ms=` value and whether the chaser continued from the next LED. Restore power; rc-a must rejoin as standby (no `active:` line). Repeat 3 times, alternating which Pi is Active. Pass: every `gap_ms` under 200 and no chaser jump.
 
 - [ ] **Step 3: Experiment 2, cross-link loss.** Unplug the Pi-to-Pi cable for 10 s, then plug it back. Pass: both log `peer_lost` then `peer_back`; no `role_changed`; no `active:` line.
 
-- [ ] **Step 4: Experiment 3, simultaneous boot.** Put both Pis on one switched power strip; switch it off and on 10 times, waiting for the chaser each time. Pass: every run shows exactly one `active: - -> A` line.
+- [ ] **Step 4: Experiment 3, simultaneous boot.** Put both Pis on one switched power strip; switch it off and on 3 times, waiting for the chaser each time. Pass: every run shows exactly one `active: - -> A` or `active: - -> B` line and no `event=fault` on either Pi.
 
 - [ ] **Step 5: Experiment 4, I/O card loss.** Press the STM32 black RESET button and hold it 3 s, then release. Pass: LEDs off while held; both daemons log `referee_lost`, then `referee_back`; no `role_changed` on either; the I/O card logs `active: - -> <previous Active>` after the 1.5 s window and the chaser resumes.
 

@@ -3,8 +3,9 @@
 Two Raspberry Pi 3B controllers run as Active/Standby. An STM32F3 Discovery
 board is the I/O card: it drives the outputs (an 8-LED ring) and acts as
 referee, granting Active to exactly one controller. A failed Active is
-replaced within 200 ms, simultaneous boot always elects slot A, and a broken
-link between the controllers never creates two Actives.
+replaced within 200 ms, simultaneous boot always ends with exactly one
+Active, and a broken link between the controllers never creates two
+Actives.
 
 Design: [docs/2026-09-27-redundancy-core-design.md](docs/2026-09-27-redundancy-core-design.md)
 Measurements: [docs/test-log.md](docs/test-log.md)
