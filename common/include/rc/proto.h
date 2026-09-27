@@ -27,4 +27,31 @@
 /* CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection. */
 uint16_t rc_crc16(const uint8_t *data, size_t len);
 
+struct rc_frame {
+	uint8_t type;
+	uint8_t len;
+	uint8_t payload[RC_MAX_PAYLOAD];
+};
+
+/* Returns the frame length, or 0 if the payload or buffer is invalid. */
+size_t rc_frame_encode(uint8_t type, const uint8_t *payload, uint8_t len, uint8_t *out,
+		       size_t out_size);
+
+struct rc_parser {
+	uint8_t state;
+	uint8_t type;
+	uint8_t len;
+	uint8_t idx;
+	uint8_t crc_lo;
+	uint16_t crc;
+	uint8_t payload[RC_MAX_PAYLOAD];
+	uint32_t crc_errors;
+	uint32_t len_errors;
+};
+
+void rc_parser_init(struct rc_parser *p);
+
+/* Feeds one byte; returns true when *out holds a complete, valid frame. */
+bool rc_parser_feed(struct rc_parser *p, uint8_t byte, struct rc_frame *out);
+
 #endif /* RC_PROTO_H_ */
