@@ -23,3 +23,7 @@ add_test(NAME role COMMAND test_role)
 add_executable(test_io_bit test_io_bit.c ${REPO}/io-card/src/io_bit.c)
 target_include_directories(test_io_bit PRIVATE ${REPO}/io-card/src)
 add_test(NAME io_bit COMMAND test_io_bit)
+
+add_executable(test_mode test_mode.c ${REPO}/io-card/src/mode.c)
+target_include_directories(test_mode PRIVATE ${REPO}/common/include ${REPO}/io-card/src)
+add_test(NAME mode COMMAND test_mode)
