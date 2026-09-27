@@ -9,6 +9,7 @@ GET /log returns the raw file; GET /info returns size, valid records, and max se
 import argparse
 import json
 import os
+import queue
 import socket
 import sys
 import threading
@@ -59,9 +60,13 @@ def open_socket(path):
     return sock
 
 
-def receive_forever(sock, ring, stop):
-    """Writes each valid record datagram to the ring; reports bad input and write errors once."""
-    bad = write_failed = False
+def receive_forever(sock, records, stop):
+    """Moves each valid record datagram into the queue; never touches the disk.
+
+    Linux queues only about 10 datagrams on the socket, so a receiver that
+    waited for a slow SD card would make the daemon drop records.
+    """
+    bad = False
     while not stop.is_set():
         try:
             data = sock.recv(256)
@@ -72,6 +77,17 @@ def receive_forever(sock, ring, stop):
             if not bad:
                 sys.stderr.write("rc-logd: invalid record datagram (%d bytes)\n" % len(data))
                 bad = True
+            continue
+        records.put(rec)
+
+
+def write_forever(records, ring, stop):
+    """Writes queued records to the ring; reports write errors once."""
+    write_failed = False
+    while not stop.is_set():
+        try:
+            rec = records.get(timeout=0.5)
+        except queue.Empty:
             continue
         try:
             ring.append(rec)
@@ -151,7 +167,9 @@ def main(argv=None):
     ring = RingFile(args.path, SLOTS)
     sys.stderr.write("rc-logd: next seq %d\n" % ring.next_seq)
     sock = open_socket(args.socket)
-    threading.Thread(target=receive_forever, args=(sock, ring, stop), daemon=True).start()
+    records = queue.Queue()
+    threading.Thread(target=receive_forever, args=(sock, records, stop), daemon=True).start()
+    threading.Thread(target=write_forever, args=(records, ring, stop), daemon=True).start()
     threading.Thread(target=flush_forever, args=(args.path, stop), daemon=True).start()
     server = make_server(args.path, args.port)
     sys.stderr.write("rc-logd: serving %s on port %d\n" % (args.path, args.port))

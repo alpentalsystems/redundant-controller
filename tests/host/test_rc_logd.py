@@ -2,10 +2,12 @@
 """Tests for central/rc_logd.py against a temporary log file."""
 import json
 import os
+import queue
 import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -131,8 +133,11 @@ class ReceiverTest(unittest.TestCase):
         ring = rc_logd.RingFile(path, 8)
         sock = rc_logd.open_socket(sock_path)
         stop = threading.Event()
-        t = threading.Thread(target=rc_logd.receive_forever, args=(sock, ring, stop))
+        records = queue.Queue()
+        t = threading.Thread(target=rc_logd.receive_forever, args=(sock, records, stop))
+        w = threading.Thread(target=rc_logd.write_forever, args=(records, ring, stop))
         t.start()
+        w.start()
         out = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         out.sendto(b"not a record", sock_path)
         out.sendto(rclog.encode(rec(0)), sock_path)
@@ -143,6 +148,7 @@ class ReceiverTest(unittest.TestCase):
             stop.wait(0.01)
         stop.set()
         t.join(2)
+        w.join(2)
         out.close()
         sock.close()
         ring.close()
@@ -153,6 +159,53 @@ class ReceiverTest(unittest.TestCase):
         os.rmdir(d)
         self.assertFalse(t.is_alive())
         self.assertEqual(([r["seq"] for r in records], invalid), ([0, 1], 0))
+
+
+class BlockingRing:
+    """Stands in for a ring file on a stalled SD card: append waits until released."""
+
+    def __init__(self):
+        self.release = threading.Event()
+        self.count = 0
+
+    def append(self, rec):
+        self.release.wait()
+        self.count += 1
+        return self.count - 1
+
+
+class SlowDiskTest(unittest.TestCase):
+    def test_slow_writes_do_not_block_receiving(self):
+        d = tempfile.mkdtemp(dir="/tmp")
+        sock_path = os.path.join(d, "log.sock")
+        ring, q, stop = BlockingRing(), queue.Queue(), threading.Event()
+        sock = rc_logd.open_socket(sock_path)
+        threads = [threading.Thread(target=rc_logd.receive_forever, args=(sock, q, stop)),
+                   threading.Thread(target=rc_logd.write_forever, args=(q, ring, stop))]
+        for t in threads:
+            t.start()
+        out = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        out.setblocking(False)
+        failed = 0
+        for _ in range(200):  # like the daemon: MSG_DONTWAIT, no retry
+            try:
+                out.sendto(rclog.encode(rec(0)), sock_path)
+            except OSError:  # EAGAIN on Linux, ENOBUFS on macOS
+                failed += 1
+            time.sleep(0.001)
+        ring.release.set()
+        for _ in range(200):
+            if ring.count == 200:
+                break
+            time.sleep(0.01)
+        stop.set()
+        for t in threads:
+            t.join(2)
+        out.close()
+        sock.close()
+        os.unlink(sock_path)
+        os.rmdir(d)
+        self.assertEqual((failed, ring.count), (0, 200))
 
 
 if __name__ == "__main__":
