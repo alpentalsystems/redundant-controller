@@ -28,6 +28,7 @@ struct role_state {
 	bool peer_seen;
 	int64_t last_peer_ms;
 	uint8_t peer_role;
+	bool peer_referee_ok;
 	uint16_t peer_step;
 	bool fault;
 	int64_t active_since_ms;

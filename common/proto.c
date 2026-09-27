@@ -46,71 +46,87 @@ size_t rc_frame_encode(uint8_t type, const uint8_t *payload, uint8_t len, uint8_
 	return total;
 }
 
-enum {
-	ST_SYNC,
-	ST_TYPE,
-	ST_LEN,
-	ST_PAYLOAD,
-	ST_CRC_LO,
-	ST_CRC_HI,
-};
+static void drop(struct rc_parser *p, uint8_t count)
+{
+	memmove(p->buf, &p->buf[count], (size_t)(p->n - count));
+	p->n = (uint8_t)(p->n - count);
+}
+
+static void enqueue(struct rc_parser *p, uint8_t type, uint8_t len, const uint8_t *payload)
+{
+	struct rc_frame *f;
+
+	if (p->q_count == RC_PARSER_QUEUE) {
+		p->queue_overflows++;
+		return;
+	}
+	f = &p->queue[(p->q_head + p->q_count) % RC_PARSER_QUEUE];
+	f->type = type;
+	f->len = len;
+	memcpy(f->payload, payload, len);
+	p->q_count++;
+}
+
+static void scan(struct rc_parser *p)
+{
+	for (;;) {
+		uint8_t skip = 0U;
+		uint8_t len;
+		uint8_t total;
+		uint16_t rx;
+
+		while ((skip < p->n) && (p->buf[skip] != RC_SYNC)) {
+			skip++;
+		}
+		if (skip > 0U) {
+			drop(p, skip);
+		}
+		if (p->n < 3U) {
+			return;
+		}
+		len = p->buf[2];
+		if (len > RC_MAX_PAYLOAD) {
+			p->len_errors++;
+			drop(p, 1U);
+			continue;
+		}
+		total = (uint8_t)(RC_FRAME_OVERHEAD + len);
+		if (p->n < total) {
+			return;
+		}
+		rx = (uint16_t)((uint16_t)p->buf[3U + len] | ((uint16_t)p->buf[4U + len] << 8));
+		if (rc_crc16(&p->buf[1], (size_t)len + 2U) != rx) {
+			p->crc_errors++;
+			drop(p, 1U);
+			continue;
+		}
+		enqueue(p, p->buf[1], len, &p->buf[3]);
+		drop(p, total);
+	}
+}
 
 void rc_parser_init(struct rc_parser *p)
 {
 	memset(p, 0, sizeof(*p));
-	p->state = ST_SYNC;
+}
+
+bool rc_parser_next(struct rc_parser *p, struct rc_frame *out)
+{
+	if (p->q_count == 0U) {
+		return false;
+	}
+	*out = p->queue[p->q_head];
+	p->q_head = (uint8_t)((p->q_head + 1U) % RC_PARSER_QUEUE);
+	p->q_count--;
+	return true;
 }
 
 bool rc_parser_feed(struct rc_parser *p, uint8_t byte, struct rc_frame *out)
 {
-	switch (p->state) {
-	case ST_SYNC:
-		if (byte == RC_SYNC) {
-			p->crc = 0xFFFFU;
-			p->state = ST_TYPE;
-		}
-		return false;
-	case ST_TYPE:
-		p->type = byte;
-		p->crc = crc_update(p->crc, byte);
-		p->state = ST_LEN;
-		return false;
-	case ST_LEN:
-		if (byte > RC_MAX_PAYLOAD) {
-			p->len_errors++;
-			p->state = ST_SYNC;
-			return false;
-		}
-		p->len = byte;
-		p->idx = 0U;
-		p->crc = crc_update(p->crc, byte);
-		p->state = (byte == 0U) ? ST_CRC_LO : ST_PAYLOAD;
-		return false;
-	case ST_PAYLOAD:
-		p->payload[p->idx++] = byte;
-		p->crc = crc_update(p->crc, byte);
-		if (p->idx == p->len) {
-			p->state = ST_CRC_LO;
-		}
-		return false;
-	case ST_CRC_LO:
-		p->crc_lo = byte;
-		p->state = ST_CRC_HI;
-		return false;
-	case ST_CRC_HI:
-		p->state = ST_SYNC;
-		if ((uint16_t)(p->crc_lo | ((uint16_t)byte << 8)) != p->crc) {
-			p->crc_errors++;
-			return false;
-		}
-		out->type = p->type;
-		out->len = p->len;
-		memcpy(out->payload, p->payload, p->len);
-		return true;
-	default:
-		p->state = ST_SYNC;
-		return false;
-	}
+	/* scan() leaves at most RC_FRAME_MAX - 1 bytes, so there is room for one more. */
+	p->buf[p->n++] = byte;
+	scan(p);
+	return rc_parser_next(p, out);
 }
 
 static void put_u16(uint8_t *b, uint16_t v)

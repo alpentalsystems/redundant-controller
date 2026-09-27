@@ -63,7 +63,8 @@ static void test_referee_lost_and_back(void)
 	(void)role_on_status(&s, &m, 1000);
 	CHECK((role_tick(&s, 1100) & ROLE_EV_REFEREE_LOST) == 0U);
 	CHECK((role_tick(&s, 1101) & ROLE_EV_REFEREE_LOST) != 0U);
-	CHECK(!role_may_drive(&s));
+	/* Keeps driving: the I/O card decides whether outputs are applied. */
+	CHECK(role_may_drive(&s));
 	CHECK((role_on_status(&s, &m, 1500) & ROLE_EV_REFEREE_BACK) != 0U);
 	CHECK(role_may_drive(&s));
 }
@@ -158,6 +159,23 @@ static void test_step_wraps_without_jump(void)
 	CHECK(mask == 0x01U); /* 0 % 8 = 0: the next LED, no jump */
 }
 
+static void test_peer_without_referee_is_not_a_conflict(void)
+{
+	struct role_state s;
+	struct rc_status ac = status(RC_SLOT_B, RC_ROLE_ACTIVE);
+	struct rc_peer stale = {.seq = 1U, .slot = RC_SLOT_A, .role = RC_ROLE_ACTIVE,
+				.referee_ok = 0U, .step = 3U};
+
+	role_init(&s, 0);
+	(void)role_on_status(&s, &ac, 100);
+	/* Old Active lost its UART but still runs and claims Active without a referee. */
+	for (int64_t t = 120; t < 5000; t += 20) {
+		(void)role_on_peer(&s, &stale, t);
+		CHECK(!s.fault);
+	}
+	CHECK(role_may_drive(&s));
+}
+
 int main(void)
 {
 	test_initial_state();
@@ -170,5 +188,6 @@ int main(void)
 	test_own_peer_message_ignored();
 	test_peer_lost();
 	test_step_wraps_without_jump();
+	test_peer_without_referee_is_not_a_conflict();
 	return CHECK_DONE();
 }

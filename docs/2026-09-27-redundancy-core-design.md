@@ -119,8 +119,11 @@ timeout) and the role the controller reports.
 - Takes the role the I/O card grants in each status frame. It becomes
   Active only when granted, and steps down to Standby as soon as a status
   frame grants Standby.
-- If no status frame arrives for 100 ms, it reports "referee lost" and
-  stops sending output commands (it could not reach the outputs anyway).
+- If no status frame arrives for 100 ms, it reports "referee lost" but keeps
+  its role and keeps sending output commands: the I/O card only applies them
+  from the slot it granted Active, so a controller that lost only the I/O
+  card's replies (a broken I/O-card-to-controller wire) keeps the outputs
+  alive instead of freezing them.
 - Sends a heartbeat to the peer over UDP every 20 ms and logs peer loss
   and recovery with timestamps.
 - Logs every role change with a monotonic timestamp.

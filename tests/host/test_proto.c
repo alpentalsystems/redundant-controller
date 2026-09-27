@@ -23,9 +23,14 @@ static size_t feed_all(struct rc_parser *p, const uint8_t *buf, size_t n,
 	for (size_t i = 0; i < n; i++) {
 		struct rc_frame f;
 
-		if (rc_parser_feed(p, buf[i], &f) && count < max_frames) {
-			frames[count++] = f;
+		if (!rc_parser_feed(p, buf[i], &f)) {
+			continue;
 		}
+		do {
+			if (count < max_frames) {
+				frames[count++] = f;
+			}
+		} while (rc_parser_next(p, &f));
 	}
 	return count;
 }
@@ -218,6 +223,25 @@ static void test_decode_rejects_wrong_type_or_len(void)
 	CHECK(rc_decode_status(&f, &st) == -1);
 }
 
+static void test_parser_false_sync_does_not_swallow_frames(void)
+{
+	/* Noise ending in a plausible header: sync, type 1, len 16. */
+	uint8_t buf[64] = {0x3CU, RC_SYNC, 0x01U, 0x10U};
+	size_t n = 4U;
+	struct rc_parser p;
+	struct rc_frame frames[4];
+
+	for (uint32_t i = 0; i < 3U; i++) {
+		struct rc_heartbeat hb = {.seq = i, .role = RC_ROLE_STANDBY};
+
+		n += rc_encode_heartbeat(&hb, &buf[n], sizeof(buf) - n);
+	}
+	rc_parser_init(&p);
+	CHECK(feed_all(&p, buf, n, frames, 4U) == 3U);
+	CHECK(frames[0].type == RC_MSG_HEARTBEAT && frames[0].payload[0] == 0U);
+	CHECK(frames[2].payload[0] == 2U);
+}
+
 int main(void)
 {
 	test_crc16_check_value();
@@ -230,6 +254,7 @@ int main(void)
 	test_parser_bad_crc_counted_and_recovers();
 	test_parser_rejects_oversize_len();
 	test_parser_back_to_back();
+	test_parser_false_sync_does_not_swallow_frames();
 	test_heartbeat_roundtrip();
 	test_status_roundtrip();
 	test_set_outputs_roundtrip();

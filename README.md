@@ -40,3 +40,5 @@ cmake -S central -B build && cmake --build build && sudo cmake --install build -
 
 Each Pi needs `enable_uart=1` and `dtoverlay=disable-bt` in
 `/boot/firmware/config.txt`, and no `console=serial0` in `cmdline.txt`.
+The cross-link port needs no DHCP (otherwise NetworkManager resets it every
+45 s): `sudo nmcli con modify netplan-eth0 ipv4.method disabled ipv6.method link-local`.

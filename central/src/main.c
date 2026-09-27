@@ -58,35 +58,42 @@ static int open_serial(void)
 	return fd;
 }
 
+/* Returns the socket, or -1 (logged) if the cross-link cannot be set up. */
 static int open_peer(struct sockaddr_in6 *group)
 {
-	int fd = socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, 0);
 	unsigned int ifindex = if_nametoindex(PEER_IFACE);
 	struct sockaddr_in6 local = {.sin6_family = AF_INET6, .sin6_port = htons(PEER_PORT),
 				     .sin6_addr = IN6ADDR_ANY_INIT};
 	int one = 1;
 	int zero = 0;
+	const char *step = NULL;
+	int fd;
 
-	if (fd < 0) {
-		die("socket");
-	}
 	if (ifindex == 0U) {
-		die("if_nametoindex " PEER_IFACE);
+		fprintf(stderr, "error: cross-link disabled: if_nametoindex " PEER_IFACE ": %s\n",
+			strerror(errno));
+		return -1;
 	}
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) != 0) {
-		die("SO_REUSEADDR");
+	fd = socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+	if (fd < 0) {
+		step = "socket";
+	} else if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) != 0) {
+		step = "SO_REUSEADDR";
+	} else if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, PEER_IFACE, sizeof(PEER_IFACE)) != 0) {
+		step = "SO_BINDTODEVICE";
+	} else if (bind(fd, (struct sockaddr *)&local, sizeof(local)) != 0) {
+		step = "bind";
+	} else if (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifindex, sizeof(ifindex)) != 0) {
+		step = "IPV6_MULTICAST_IF";
+	} else if (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &zero, sizeof(zero)) != 0) {
+		step = "IPV6_MULTICAST_LOOP";
 	}
-	if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, PEER_IFACE, sizeof(PEER_IFACE)) != 0) {
-		die("SO_BINDTODEVICE");
-	}
-	if (bind(fd, (struct sockaddr *)&local, sizeof(local)) != 0) {
-		die("bind");
-	}
-	if (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifindex, sizeof(ifindex)) != 0) {
-		die("IPV6_MULTICAST_IF");
-	}
-	if (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &zero, sizeof(zero)) != 0) {
-		die("IPV6_MULTICAST_LOOP");
+	if (step != NULL) {
+		fprintf(stderr, "error: cross-link disabled: %s: %s\n", step, strerror(errno));
+		if (fd >= 0) {
+			close(fd);
+		}
+		return -1;
 	}
 	memset(group, 0, sizeof(*group));
 	group->sin6_family = AF_INET6;
@@ -166,6 +173,7 @@ int main(void)
 	uint32_t peer_seq = 0U;
 	int64_t next_hb = now_ms();
 	bool peer_send_ok = true;
+	bool peer_recv_ok = true;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	rc_parser_init(&parser);
@@ -197,9 +205,14 @@ int main(void)
 				struct rc_frame f;
 				struct rc_status st;
 
-				if (rc_parser_feed(&parser, buf[i], &f) && (rc_decode_status(&f, &st) == 0)) {
-					ev |= role_on_status(&s, &st, t);
+				if (!rc_parser_feed(&parser, buf[i], &f)) {
+					continue;
 				}
+				do {
+					if (rc_decode_status(&f, &st) == 0) {
+						ev |= role_on_status(&s, &st, t);
+					}
+				} while (rc_parser_next(&parser, &f));
 			}
 		}
 		if ((fds[1].revents & POLLIN) != 0) {
@@ -207,17 +220,30 @@ int main(void)
 			ssize_t n = recv(peer, buf, sizeof(buf), 0);
 			struct rc_parser pp;
 
+			/* The cross-link is monitoring only: a receive failure never stops control. */
 			if ((n < 0) && (errno != EAGAIN)) {
-				die("peer recv");
+				if (peer_recv_ok) {
+					printf("t=%lld event=peer_recv_failed error=%s\n", (long long)t,
+					       strerror(errno));
+					peer_recv_ok = false;
+				}
+			} else if ((n >= 0) && !peer_recv_ok) {
+				printf("t=%lld event=peer_recv_ok\n", (long long)t);
+				peer_recv_ok = true;
 			}
 			rc_parser_init(&pp);
 			for (ssize_t i = 0; i < n; i++) {
 				struct rc_frame f;
 				struct rc_peer pm;
 
-				if (rc_parser_feed(&pp, buf[i], &f) && (rc_decode_peer(&f, &pm) == 0)) {
-					ev |= role_on_peer(&s, &pm, t);
+				if (!rc_parser_feed(&pp, buf[i], &f)) {
+					continue;
 				}
+				do {
+					if (rc_decode_peer(&f, &pm) == 0) {
+						ev |= role_on_peer(&s, &pm, t);
+					}
+				} while (rc_parser_next(&pp, &f));
 			}
 		}
 		ev |= role_tick(&s, t);
@@ -233,15 +259,17 @@ int main(void)
 			write_all(serial, out, n);
 			n = rc_encode_peer(&pm, out, sizeof(out));
 			/* The cross-link is monitoring only: a send failure never stops control. */
-			if (sendto(peer, out, n, 0, (struct sockaddr *)&group, sizeof(group)) < 0) {
-				if ((errno != EAGAIN) && peer_send_ok) {
-					printf("t=%lld event=peer_send_failed error=%s\n", (long long)t,
-					       strerror(errno));
-					peer_send_ok = false;
+			if (peer >= 0) {
+				if (sendto(peer, out, n, 0, (struct sockaddr *)&group, sizeof(group)) < 0) {
+					if ((errno != EAGAIN) && peer_send_ok) {
+						printf("t=%lld event=peer_send_failed error=%s\n",
+						       (long long)t, strerror(errno));
+						peer_send_ok = false;
+					}
+				} else if (!peer_send_ok) {
+					printf("t=%lld event=peer_send_ok\n", (long long)t);
+					peer_send_ok = true;
 				}
-			} else if (!peer_send_ok) {
-				printf("t=%lld event=peer_send_ok\n", (long long)t);
-				peer_send_ok = true;
 			}
 			next_hb += HEARTBEAT_PERIOD_MS;
 			if (next_hb <= t) {

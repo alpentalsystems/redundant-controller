@@ -37,22 +37,29 @@ struct rc_frame {
 size_t rc_frame_encode(uint8_t type, const uint8_t *payload, uint8_t len, uint8_t *out,
 		       size_t out_size);
 
+#define RC_PARSER_QUEUE 4U
+
 struct rc_parser {
-	uint8_t state;
-	uint8_t type;
-	uint8_t len;
-	uint8_t idx;
-	uint8_t crc_lo;
-	uint16_t crc;
-	uint8_t payload[RC_MAX_PAYLOAD];
+	uint8_t buf[RC_FRAME_MAX];
+	uint8_t n;
+	struct rc_frame queue[RC_PARSER_QUEUE];
+	uint8_t q_head;
+	uint8_t q_count;
 	uint32_t crc_errors;
 	uint32_t len_errors;
+	uint32_t queue_overflows;
 };
 
 void rc_parser_init(struct rc_parser *p);
 
-/* Feeds one byte; returns true when *out holds a complete, valid frame. */
+/*
+ * Feeds one byte; returns true when *out holds a complete, valid frame.
+ * A bad candidate frame drops only its sync byte, so frames that follow a
+ * false sync are still found. Call rc_parser_next() until it returns false
+ * to collect further frames completed by the same byte.
+ */
 bool rc_parser_feed(struct rc_parser *p, uint8_t byte, struct rc_frame *out);
+bool rc_parser_next(struct rc_parser *p, struct rc_frame *out);
 
 struct rc_heartbeat {
 	uint32_t seq;

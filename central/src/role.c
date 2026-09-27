@@ -14,9 +14,12 @@ void role_init(struct role_state *s, int64_t now_ms)
 
 static unsigned update_fault(struct role_state *s)
 {
-	/* Only a peer claim made after we became Active is a conflict. */
+	/*
+	 * Only a peer that claims Active after we became Active, while it still
+	 * reaches the referee, is a conflict. A peer without a referee holds no grant.
+	 */
 	bool f = (s->role == RC_ROLE_ACTIVE) && s->peer_ok && (s->peer_role == RC_ROLE_ACTIVE) &&
-		 (s->last_peer_ms > s->active_since_ms);
+		 s->peer_referee_ok && (s->last_peer_ms > s->active_since_ms);
 
 	if (f == s->fault) {
 		return 0U;
@@ -61,6 +64,7 @@ unsigned role_on_peer(struct role_state *s, const struct rc_peer *m, int64_t now
 	}
 	s->last_peer_ms = now_ms;
 	s->peer_role = m->role;
+	s->peer_referee_ok = (m->referee_ok != 0U);
 	s->peer_step = m->step;
 	s->peer_seen = true;
 	if (!s->peer_ok) {
@@ -87,7 +91,8 @@ unsigned role_tick(struct role_state *s, int64_t now_ms)
 
 bool role_may_drive(const struct role_state *s)
 {
-	return (s->role == RC_ROLE_ACTIVE) && s->referee_ok && !s->fault;
+	/* Referee replies are not required: the I/O card only applies outputs from its Active. */
+	return (s->role == RC_ROLE_ACTIVE) && !s->fault;
 }
 
 bool role_chaser_due(struct role_state *s, int64_t now_ms, uint8_t *mask)

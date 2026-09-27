@@ -187,9 +187,12 @@ int main(void)
 			while (ring_buf_get(&l->rb, &byte, 1U) == 1U) {
 				struct rc_frame f;
 
-				if (rc_parser_feed(&l->parser, byte, &f)) {
-					handle_frame(l, &f, now);
+				if (!rc_parser_feed(&l->parser, byte, &f)) {
+					continue;
 				}
+				do {
+					handle_frame(l, &f, now);
+				} while (rc_parser_next(&l->parser, &f));
 			}
 		}
 		if (arb_tick(&arb, now)) {
