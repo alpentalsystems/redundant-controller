@@ -19,3 +19,7 @@ add_test(NAME arbiter COMMAND test_arbiter)
 add_executable(test_role test_role.c ${REPO}/central/src/role.c)
 target_include_directories(test_role PRIVATE ${REPO}/common/include ${REPO}/central/src)
 add_test(NAME role COMMAND test_role)
+
+add_executable(test_io_bit test_io_bit.c ${REPO}/io-card/src/io_bit.c)
+target_include_directories(test_io_bit PRIVATE ${REPO}/io-card/src)
+add_test(NAME io_bit COMMAND test_io_bit)
