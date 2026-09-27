@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cmake -S tests/host -B build/host
+          cmake --build build/host
+          ctest --test-dir build/host --output-on-failure
+
+  central:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cmake -S central -B build/central
+          cmake --build build/central
+
+  io-card:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: redundant-controller
+      - uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: redundant-controller
+          toolchains: arm-zephyr-eabi
+      - run: west build -b stm32f3_disco@E -d build/io-card redundant-controller/io-card
