@@ -57,6 +57,24 @@ tools/rcctl.py run-bit         # run BIT now
 Raw protocol: `nc <controller> 5000`, then `STATUS`, `BIT`, `LEDS <hex>`,
 `LAMP_TEST`, or `RUN_BIT`, one per line; each reply is one JSON line.
 
+## Log and viewer
+
+Each controller records a status snapshot every 100 ms and an event
+record at each event. The daemon sends each 64-byte record to `rc-logd`
+over a local socket and never touches the file, so a slow SD card cannot
+stall control. `rc-logd` keeps a 10 MiB ring file
+(`/var/lib/rc-central/rc-log.bin`, about 4.5 hours) and serves it on port
+8080. Records carry the I/O card's clock and boot ID, so both controllers'
+logs merge on one timeline.
+
+```sh
+tools/rcview.py                       # download both logs, open the viewer
+tools/rcview.py --open logs/*.bin     # view saved logs
+```
+
+The viewer runs at http://127.0.0.1:8765 (`--port` to change): role
+timeline, filters, and CSV export of the filtered rows.
+
 ## Build
 
 ```sh
