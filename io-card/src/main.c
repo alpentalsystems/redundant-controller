@@ -114,6 +114,7 @@ static void handle_frame(struct link *l, const struct rc_frame *f, int64_t now)
 		st.active_slot = arb_active(&arb);
 		st.mode = mode.mode;
 		st.io_fail = io_fail;
+		st.io_time_ms = (uint32_t)now;
 		n = rc_encode_status(&st, out, sizeof(out));
 		send_frame(l->dev, out, n);
 	} else if (rc_decode_set_outputs(f, &so) == 0) {

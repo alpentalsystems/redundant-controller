@@ -173,18 +173,20 @@ static void test_heartbeat_roundtrip(void)
 static void test_status_roundtrip(void)
 {
 	struct rc_status in = {.seq = 7U, .slot = RC_SLOT_B, .granted_role = RC_ROLE_STANDBY,
-			       .active_slot = RC_SLOT_A, .mode = RC_MODE_TEST, .io_fail = 0x21U};
+			       .active_slot = RC_SLOT_A, .mode = RC_MODE_TEST, .io_fail = 0x21U,
+			       .io_time_ms = 0xA1B2C3D4U};
 	struct rc_status out = {0};
 	uint8_t buf[RC_FRAME_MAX];
 	struct rc_frame f;
 	size_t n = rc_encode_status(&in, buf, sizeof(buf));
 
-	CHECK(n == RC_FRAME_OVERHEAD + 9U);
+	CHECK(n == RC_FRAME_OVERHEAD + 13U);
 	CHECK(decode_one(buf, n, &f));
 	CHECK(rc_decode_status(&f, &out) == 0);
 	CHECK(out.seq == 7U && out.slot == RC_SLOT_B);
 	CHECK(out.granted_role == RC_ROLE_STANDBY && out.active_slot == RC_SLOT_A);
 	CHECK(out.mode == RC_MODE_TEST && out.io_fail == 0x21U);
+	CHECK(out.io_time_ms == 0xA1B2C3D4U);
 }
 
 static void test_set_outputs_roundtrip(void)
@@ -238,6 +240,7 @@ static void test_decode_rejects_part1_lengths(void)
 	struct rc_frame hb = {.type = RC_MSG_HEARTBEAT, .len = 5U};
 	struct rc_frame st = {.type = RC_MSG_STATUS, .len = 7U};
 	struct rc_frame pe = {.type = RC_MSG_PEER, .len = 9U};
+	struct rc_frame st2 = {.type = RC_MSG_STATUS, .len = 9U};
 	struct rc_heartbeat h;
 	struct rc_status s;
 	struct rc_peer p;
@@ -245,6 +248,7 @@ static void test_decode_rejects_part1_lengths(void)
 	CHECK(rc_decode_heartbeat(&hb, &h) == -1);
 	CHECK(rc_decode_status(&st, &s) == -1);
 	CHECK(rc_decode_peer(&pe, &p) == -1);
+	CHECK(rc_decode_status(&st2, &s) == -1); /* part 2 length */
 }
 
 static void test_decode_rejects_wrong_type_or_len(void)

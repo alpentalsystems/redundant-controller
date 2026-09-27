@@ -166,7 +166,7 @@ size_t rc_encode_heartbeat(const struct rc_heartbeat *m, uint8_t *out, size_t ou
 
 size_t rc_encode_status(const struct rc_status *m, uint8_t *out, size_t out_size)
 {
-	uint8_t p[9];
+	uint8_t p[13];
 
 	put_u32(p, m->seq);
 	p[4] = m->slot;
@@ -174,6 +174,7 @@ size_t rc_encode_status(const struct rc_status *m, uint8_t *out, size_t out_size
 	p[6] = m->active_slot;
 	p[7] = m->mode;
 	p[8] = m->io_fail;
+	put_u32(&p[9], m->io_time_ms);
 	return rc_frame_encode(RC_MSG_STATUS, p, sizeof(p), out, out_size);
 }
 
@@ -214,7 +215,7 @@ int rc_decode_heartbeat(const struct rc_frame *f, struct rc_heartbeat *m)
 
 int rc_decode_status(const struct rc_frame *f, struct rc_status *m)
 {
-	if ((f->type != RC_MSG_STATUS) || (f->len != 9U)) {
+	if ((f->type != RC_MSG_STATUS) || (f->len != 13U)) {
 		return -1;
 	}
 	m->seq = get_u32(f->payload);
@@ -223,6 +224,7 @@ int rc_decode_status(const struct rc_frame *f, struct rc_status *m)
 	m->active_slot = f->payload[6];
 	m->mode = f->payload[7];
 	m->io_fail = f->payload[8];
+	m->io_time_ms = get_u32(&f->payload[9]);
 	return 0;
 }
 

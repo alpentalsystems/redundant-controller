@@ -78,6 +78,7 @@ struct rc_status {
 	uint8_t active_slot;
 	uint8_t mode;
 	uint8_t io_fail;
+	uint32_t io_time_ms;
 };
 
 struct rc_set_outputs {
