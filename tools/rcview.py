@@ -28,7 +28,8 @@ MATCH_WINDOW_MS = 10000
 GAP_MS = 1000
 TIMELINE_EVENTS = {"started", "role_changed", "healthy", "unhealthy", "referee_lost",
                    "referee_back", "mode_changed", "fault_set", "fault_cleared"}
-COLUMNS = (["controller", "seq", "kind", "event", "detail", "io_time_ms", "wall", "mono_ms",
+COLUMNS = (["controller", "seq", "kind", "event", "detail", "io_time_ms", "io_estimated",
+            "wall", "mono_ms",
             "role", "mode", "healthy", "referee", "peer", "peer_healthy", "fault", "active",
             "io_fail", "step", "mask"] + list(rclog.BIT_ITEMS))
 LOG_PORT = 8080
@@ -47,26 +48,41 @@ def controller_name(records, fallback):
 def split_segments(records):
     """Splits one controller's records (sorted by seq) at I/O card restarts.
 
-    Records without I/O card time join the segment of the next record that has it.
+    Records without I/O card time join the segment of the next record that has it and
+    get an estimated I/O card time from the controller's own clock (io_estimated).
     """
-    segments, current, pending, last_io = [], None, [], None
+    segments, current, pending, last = [], None, [], None
     for r in records:
         if not rclog.io_valid(r):
             pending.append(r)
             continue
-        if current is None or r["io_time_ms"] < last_io - SEGMENT_DROP_MS:
+        if current is None or r["io_time_ms"] < last["io_time_ms"] - SEGMENT_DROP_MS:
             current = []
             segments.append(current)
+        for p in pending:
+            estimate(p, r)
         current.extend(pending)
         pending = []
         current.append(r)
-        last_io = r["io_time_ms"]
+        last = r
     if pending:
         if current is None:
             segments.append(pending)
         else:
+            for p in pending:
+                estimate(p, last)
             current.extend(pending)
     return segments
+
+
+def estimate(r, ref):
+    """I/O card time of r from a nearby record with a real one, using controller uptime."""
+    r["io_time_ms"] = max(0, ref["io_time_ms"] + (r["mono_ms"] - ref["mono_ms"]))
+    r["io_estimated"] = True
+
+
+def has_io_time(r):
+    return rclog.io_valid(r) or r.get("io_estimated", False)
 
 
 def boot_time(segment):
@@ -126,7 +142,8 @@ def row_values(name, r):
         "%Y-%m-%d %H:%M:%S.%f")[:-3]
     return ([name, r["seq"], "event" if r["type"] == rclog.EVENT else "snapshot",
              rclog.EVENTS.get(r["event"], str(r["event"])), rclog.detail_text(r),
-             r["io_time_ms"] if f["io_time_valid"] else None, wall, r["mono_ms"],
+             r["io_time_ms"] if has_io_time(r) else None, r.get("io_estimated", False),
+             wall, r["mono_ms"],
              rclog.ROLES.get(r["role"], str(r["role"])),
              rclog.MODES.get(r["mode"], str(r["mode"])), f["healthy"], f["referee"],
              f["peer"], f["peer_healthy"], f["fault"],
@@ -147,7 +164,7 @@ def timeline(rows):
     """Role intervals per controller in I/O card time, plus markers for key events."""
     lanes, markers = {}, []
     for name, r in rows:
-        if not rclog.io_valid(r):
+        if not has_io_time(r):
             continue
         t = r["io_time_ms"]
         role = rclog.ROLES.get(r["role"], "unknown")

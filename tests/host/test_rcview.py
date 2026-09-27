@@ -41,6 +41,22 @@ class DataTest(unittest.TestCase):
                                       rec(4, 0, valid=False)])
         self.assertEqual([[r["seq"] for r in s] for s in segs], [[1, 2, 3, 4]])
 
+    def test_records_before_first_status_get_estimated_time(self):
+        # A daemon restart an hour into the I/O card run: 'started' comes before any STATUS.
+        a = [rec(1, 100), rec(2, 200)]
+        started = ev(3, 0, 1)
+        started.update(flags=0x01, io_time_ms=0, mono_ms=5000)
+        after = rec(4, 3_600_050)
+        after["mono_ms"] = 5050
+        segs = rcview.merge({"A": a + [started, after]})
+        rows = [(r["seq"], r["io_time_ms"], r.get("io_estimated", False)) for _, r in segs[0]["rows"]]
+        self.assertEqual(rows, [(1, 100, False), (2, 200, False), (3, 3_600_000, True),
+                                (4, 3_600_050, False)])
+        self.assertIn([3_600_000, "A", "started"], rcview.timeline(segs[0]["rows"])["markers"])
+        self.assertEqual(len(rcview.filter_rows(segs[0]["rows"], io_from=3_599_000)), 1)
+        values = dict(zip(rcview.COLUMNS, rcview.row_values("A", started)))
+        self.assertEqual((values["io_time_ms"], values["io_estimated"]), (3_600_000, True))
+
     def test_merge_interleaves_by_io_time(self):
         logs = {"A": [rec(1, 100), rec(2, 300)],
                 "B": [rec(10, 200, slot=1), rec(11, 400, slot=1)]}
