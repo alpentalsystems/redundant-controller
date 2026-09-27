@@ -15,3 +15,7 @@ add_test(NAME proto COMMAND test_proto)
 add_executable(test_arbiter test_arbiter.c ${REPO}/io-card/src/arbiter.c)
 target_include_directories(test_arbiter PRIVATE ${REPO}/common/include ${REPO}/io-card/src)
 add_test(NAME arbiter COMMAND test_arbiter)
+
+add_executable(test_role test_role.c ${REPO}/central/src/role.c)
+target_include_directories(test_role PRIVATE ${REPO}/common/include ${REPO}/central/src)
+add_test(NAME role COMMAND test_role)

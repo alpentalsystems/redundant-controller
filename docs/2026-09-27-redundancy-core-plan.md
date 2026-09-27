@@ -1733,6 +1733,7 @@ struct role_state {
 	uint8_t peer_role;
 	uint16_t peer_step;
 	bool fault;
+	int64_t active_since_ms;
 	uint16_t step;
 	int64_t last_step_ms;
 };
@@ -1768,7 +1769,9 @@ void role_init(struct role_state *s, int64_t now_ms)
 
 static unsigned update_fault(struct role_state *s)
 {
-	bool f = (s->role == RC_ROLE_ACTIVE) && s->peer_ok && (s->peer_role == RC_ROLE_ACTIVE);
+	/* Only a peer claim made after we became Active is a conflict. */
+	bool f = (s->role == RC_ROLE_ACTIVE) && s->peer_ok && (s->peer_role == RC_ROLE_ACTIVE) &&
+		 (s->last_peer_ms > s->active_since_ms);
 
 	if (f == s->fault) {
 		return 0U;
@@ -1796,6 +1799,7 @@ unsigned role_on_status(struct role_state *s, const struct rc_status *m, int64_t
 		}
 		if (m->granted_role == RC_ROLE_ACTIVE) {
 			s->last_step_ms = now_ms - ROLE_CHASER_PERIOD_MS;
+			s->active_since_ms = now_ms;
 		}
 		s->role = m->granted_role;
 		ev |= ROLE_EV_ROLE_CHANGED;
