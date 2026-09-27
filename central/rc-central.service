@@ -4,6 +4,7 @@ After=network.target
 StartLimitIntervalSec=0
 
 [Service]
+StateDirectory=rc-central
 ExecStart=/usr/local/bin/rc-central
 Restart=always
 RestartSec=1

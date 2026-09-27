@@ -17,6 +17,8 @@
 
 #include "bit.h"
 #include "cmd.h"
+#include "logstore.h"
+#include "rc/logrec.h"
 #include "rc/proto.h"
 #include "role.h"
 
@@ -31,6 +33,8 @@
 #define TEMP_PATH "/sys/class/thermal/thermal_zone0/temp"
 /* On-demand BIT runs at most this often; extra RUN_BIT commands reuse the result. */
 #define RUN_BIT_MIN_INTERVAL_MS 500
+#define LOG_PATH "/var/lib/rc-central/rc-log.bin"
+#define LOG_SNAPSHOT_PERIOD_MS 100
 
 struct client {
 	int fd;
@@ -57,6 +61,9 @@ struct daemon {
 	bool peer_recv_ok;
 	char uv_path[96];
 	struct client clients[TCP_CLIENTS];
+	struct logstore log;
+	bool log_open;
+	bool log_failed;
 };
 
 static int64_t now_ms(void)
@@ -64,6 +71,14 @@ static int64_t now_ms(void)
 	struct timespec ts;
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+
+static int64_t wall_now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_REALTIME, &ts);
 	return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
 }
 
@@ -284,6 +299,86 @@ static void send_run_bit(struct daemon *d)
 	write_all(d->serial, out, n);
 }
 
+/* Appends one record; logging never stops control, so errors are only reported. */
+static void log_record(struct daemon *d, int64_t t, uint8_t type, uint8_t event, uint32_t detail)
+{
+	struct rc_log_record r;
+	uint8_t bits[BIT_ITEMS];
+	uint32_t io_time = 0U;
+	bool io_valid = role_io_time(&d->s, t, &io_time);
+	int err;
+
+	if (!d->log_open) {
+		return;
+	}
+	for (int i = 0; i < BIT_ITEMS; i++) {
+		bits[i] = d->cbit.valid ? (uint8_t)d->cbit.result[i] : RC_LOG_BIT_NOT_RUN;
+	}
+	memset(&r, 0, sizeof(r));
+	r.type = type;
+	r.io_time_ms = io_time;
+	r.mono_ms = (uint64_t)t;
+	r.wall_ms = (uint64_t)wall_now_ms();
+	r.slot = d->s.slot;
+	r.role = d->s.role;
+	r.mode = d->s.mode;
+	r.flags = (uint8_t)((d->health.healthy ? RC_LOG_F_HEALTHY : 0U) |
+			    (d->s.referee_ok ? RC_LOG_F_REFEREE_OK : 0U) |
+			    (d->s.peer_ok ? RC_LOG_F_PEER_OK : 0U) |
+			    (d->s.peer_healthy ? RC_LOG_F_PEER_HEALTHY : 0U) |
+			    (d->s.fault ? RC_LOG_F_FAULT : 0U) |
+			    (io_valid ? RC_LOG_F_IO_TIME_VALID : 0U));
+	r.active_slot = d->s.active_slot;
+	r.io_fail = d->s.io_fail;
+	r.bit_results = rc_log_pack_bits(bits, BIT_ITEMS);
+	r.step = d->s.step;
+	r.mask = role_current_mask(&d->s);
+	r.event = event;
+	r.detail = detail;
+	err = logstore_append(&d->log, &r);
+	if ((err != 0) && !d->log_failed) {
+		printf("t=%lld event=log_write_failed error=\"%s\"\n", (long long)t, strerror(-err));
+		d->log_failed = true;
+	} else if ((err == 0) && d->log_failed) {
+		printf("t=%lld event=log_write_ok\n", (long long)t);
+		d->log_failed = false;
+	}
+}
+
+static void log_role_events(struct daemon *d, unsigned ev, int64_t t)
+{
+	static const struct {
+		unsigned bit;
+		uint8_t event;
+	} map[] = {
+		{ROLE_EV_SLOT_LEARNED, RC_LOG_EV_SLOT_LEARNED},
+		{ROLE_EV_ROLE_CHANGED, RC_LOG_EV_ROLE_CHANGED},
+		{ROLE_EV_REFEREE_LOST, RC_LOG_EV_REFEREE_LOST},
+		{ROLE_EV_REFEREE_BACK, RC_LOG_EV_REFEREE_BACK},
+		{ROLE_EV_PEER_LOST, RC_LOG_EV_PEER_LOST},
+		{ROLE_EV_PEER_BACK, RC_LOG_EV_PEER_BACK},
+		{ROLE_EV_FAULT_SET, RC_LOG_EV_FAULT_SET},
+		{ROLE_EV_FAULT_CLEARED, RC_LOG_EV_FAULT_CLEARED},
+		{ROLE_EV_MODE_CHANGED, RC_LOG_EV_MODE_CHANGED},
+	};
+
+	for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+		uint32_t detail = 0U;
+
+		if ((ev & map[i].bit) == 0U) {
+			continue;
+		}
+		if (map[i].event == RC_LOG_EV_SLOT_LEARNED) {
+			detail = d->s.slot;
+		} else if (map[i].event == RC_LOG_EV_ROLE_CHANGED) {
+			detail = d->s.role;
+		} else if (map[i].event == RC_LOG_EV_MODE_CHANGED) {
+			detail = d->s.mode;
+		}
+		log_record(d, t, RC_LOG_EVENT, map[i].event, detail);
+	}
+}
+
 /*
  * Periodic checks close the measurement windows and update health. An
  * on-demand check (RUN_BIT) only reads them, so it can neither shorten a
@@ -329,6 +424,8 @@ static void run_bit(struct daemon *d, int64_t t, bool periodic)
 			bit_item_value(&d->cbit, i, value, sizeof(value));
 			printf("t=%lld event=bit item=%s result=%s value=\"%s\"\n", (long long)t,
 			       bit_item_name(i), bit_result_name(d->cbit.result[i]), value);
+			log_record(d, t, RC_LOG_EVENT, RC_LOG_EV_BIT_ITEM,
+				   ((uint32_t)i << 8) | (uint32_t)d->cbit.result[i]);
 		}
 	}
 	if (!periodic) {
@@ -337,6 +434,8 @@ static void run_bit(struct daemon *d, int64_t t, bool periodic)
 	if (bit_health_update(&d->health, &d->cbit) || !prev.valid) {
 		printf("t=%lld slot=%c event=%s\n", (long long)t, slot_name(d->s.slot),
 		       d->health.healthy ? "healthy" : "unhealthy");
+		log_record(d, t, RC_LOG_EVENT,
+			   d->health.healthy ? RC_LOG_EV_HEALTHY : RC_LOG_EV_UNHEALTHY, 0U);
 	}
 }
 
@@ -386,6 +485,8 @@ static size_t handle_line(struct daemon *d, const char *line, int64_t t, char *o
 	}
 	if (res.action != CMD_ACT_NONE) {
 		printf("t=%lld event=tcp_command line=\"%s\"\n", (long long)t, line);
+		log_record(d, t, RC_LOG_EVENT, RC_LOG_EV_TCP_OUTPUT,
+			   ((uint32_t)res.action << 8) | res.leds);
 	}
 	return len;
 }
@@ -565,6 +666,8 @@ int main(void)
 	int64_t start;
 	int64_t next_hb;
 	int64_t next_bit;
+	int64_t next_snap;
+	int err;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	d.serial = open_serial();
@@ -582,6 +685,16 @@ int main(void)
 	start = now_ms();
 	role_init(&d.s, start);
 	bit_health_init(&d.health);
+	err = logstore_open(&d.log, LOG_PATH, LOGSTORE_SLOTS);
+	if (err != 0) {
+		fprintf(stderr, "error: log disabled: %s: %s\n", LOG_PATH, strerror(-err));
+	} else {
+		d.log_open = true;
+		printf("t=%lld event=log_open next_seq=%lu\n", (long long)start,
+		       (unsigned long)d.log.next_seq);
+	}
+	log_record(&d, start, RC_LOG_EVENT, RC_LOG_EV_STARTED, 0U);
+	next_snap = start;
 	d.last_hb_ms = start;
 	next_hb = start;
 	next_bit = start + BIT_PBIT_DELAY_MS;
@@ -615,6 +728,14 @@ int main(void)
 		}
 		ev |= role_tick(&d.s, t);
 		log_events(ev, &d.s, t);
+		log_role_events(&d, ev, t);
+		if (t >= next_snap) {
+			log_record(&d, t, RC_LOG_SNAPSHOT, RC_LOG_EV_NONE, 0U);
+			next_snap += LOG_SNAPSHOT_PERIOD_MS;
+			if (next_snap <= t) {
+				next_snap = t + LOG_SNAPSHOT_PERIOD_MS;
+			}
+		}
 
 		if (t >= next_bit) {
 			run_bit(&d, t, true);
