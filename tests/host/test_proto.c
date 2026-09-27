@@ -142,6 +142,82 @@ static void test_parser_back_to_back(void)
 	CHECK(frames[0].payload[0] == 0xAAU && frames[1].payload[0] == 0xBBU);
 }
 
+static bool decode_one(const uint8_t *buf, size_t n, struct rc_frame *f)
+{
+	struct rc_parser p;
+
+	rc_parser_init(&p);
+	return feed_all(&p, buf, n, f, 1U) == 1U;
+}
+
+static void test_heartbeat_roundtrip(void)
+{
+	struct rc_heartbeat in = {.seq = 0x01020304U, .role = RC_ROLE_ACTIVE};
+	struct rc_heartbeat out = {0};
+	uint8_t buf[RC_FRAME_MAX];
+	struct rc_frame f;
+	size_t n = rc_encode_heartbeat(&in, buf, sizeof(buf));
+
+	CHECK(n == RC_FRAME_OVERHEAD + 5U);
+	CHECK(buf[3] == 0x04U); /* little-endian seq */
+	CHECK(decode_one(buf, n, &f));
+	CHECK(rc_decode_heartbeat(&f, &out) == 0);
+	CHECK(out.seq == in.seq && out.role == in.role);
+}
+
+static void test_status_roundtrip(void)
+{
+	struct rc_status in = {.seq = 7U, .slot = RC_SLOT_B, .granted_role = RC_ROLE_STANDBY,
+			       .active_slot = RC_SLOT_A};
+	struct rc_status out = {0};
+	uint8_t buf[RC_FRAME_MAX];
+	struct rc_frame f;
+	size_t n = rc_encode_status(&in, buf, sizeof(buf));
+
+	CHECK(decode_one(buf, n, &f));
+	CHECK(rc_decode_status(&f, &out) == 0);
+	CHECK(out.seq == 7U && out.slot == RC_SLOT_B);
+	CHECK(out.granted_role == RC_ROLE_STANDBY && out.active_slot == RC_SLOT_A);
+}
+
+static void test_set_outputs_roundtrip(void)
+{
+	struct rc_set_outputs in = {.mask = 0x81U};
+	struct rc_set_outputs out = {0};
+	uint8_t buf[RC_FRAME_MAX];
+	struct rc_frame f;
+	size_t n = rc_encode_set_outputs(&in, buf, sizeof(buf));
+
+	CHECK(decode_one(buf, n, &f));
+	CHECK(rc_decode_set_outputs(&f, &out) == 0);
+	CHECK(out.mask == 0x81U);
+}
+
+static void test_peer_roundtrip(void)
+{
+	struct rc_peer in = {.seq = 0xFFFFFFFFU, .slot = RC_SLOT_A, .role = RC_ROLE_ACTIVE,
+			     .referee_ok = 1U, .step = 0xBEEFU};
+	struct rc_peer out = {0};
+	uint8_t buf[RC_FRAME_MAX];
+	struct rc_frame f;
+	size_t n = rc_encode_peer(&in, buf, sizeof(buf));
+
+	CHECK(decode_one(buf, n, &f));
+	CHECK(rc_decode_peer(&f, &out) == 0);
+	CHECK(out.seq == in.seq && out.slot == in.slot && out.role == in.role);
+	CHECK(out.referee_ok == 1U && out.step == 0xBEEFU);
+}
+
+static void test_decode_rejects_wrong_type_or_len(void)
+{
+	struct rc_frame f = {.type = RC_MSG_STATUS, .len = 5U};
+	struct rc_heartbeat hb;
+	struct rc_status st;
+
+	CHECK(rc_decode_heartbeat(&f, &hb) == -1);
+	CHECK(rc_decode_status(&f, &st) == -1);
+}
+
 int main(void)
 {
 	test_crc16_check_value();
@@ -154,5 +230,10 @@ int main(void)
 	test_parser_bad_crc_counted_and_recovers();
 	test_parser_rejects_oversize_len();
 	test_parser_back_to_back();
+	test_heartbeat_roundtrip();
+	test_status_roundtrip();
+	test_set_outputs_roundtrip();
+	test_peer_roundtrip();
+	test_decode_rejects_wrong_type_or_len();
 	return CHECK_DONE();
 }

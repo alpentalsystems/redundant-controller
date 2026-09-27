@@ -112,3 +112,109 @@ bool rc_parser_feed(struct rc_parser *p, uint8_t byte, struct rc_frame *out)
 		return false;
 	}
 }
+
+static void put_u16(uint8_t *b, uint16_t v)
+{
+	b[0] = (uint8_t)(v & 0xFFU);
+	b[1] = (uint8_t)(v >> 8);
+}
+
+static void put_u32(uint8_t *b, uint32_t v)
+{
+	b[0] = (uint8_t)(v & 0xFFU);
+	b[1] = (uint8_t)((v >> 8) & 0xFFU);
+	b[2] = (uint8_t)((v >> 16) & 0xFFU);
+	b[3] = (uint8_t)(v >> 24);
+}
+
+static uint16_t get_u16(const uint8_t *b)
+{
+	return (uint16_t)((uint16_t)b[0] | ((uint16_t)b[1] << 8));
+}
+
+static uint32_t get_u32(const uint8_t *b)
+{
+	return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
+	       ((uint32_t)b[3] << 24);
+}
+
+size_t rc_encode_heartbeat(const struct rc_heartbeat *m, uint8_t *out, size_t out_size)
+{
+	uint8_t p[5];
+
+	put_u32(p, m->seq);
+	p[4] = m->role;
+	return rc_frame_encode(RC_MSG_HEARTBEAT, p, sizeof(p), out, out_size);
+}
+
+size_t rc_encode_status(const struct rc_status *m, uint8_t *out, size_t out_size)
+{
+	uint8_t p[7];
+
+	put_u32(p, m->seq);
+	p[4] = m->slot;
+	p[5] = m->granted_role;
+	p[6] = m->active_slot;
+	return rc_frame_encode(RC_MSG_STATUS, p, sizeof(p), out, out_size);
+}
+
+size_t rc_encode_set_outputs(const struct rc_set_outputs *m, uint8_t *out, size_t out_size)
+{
+	return rc_frame_encode(RC_MSG_SET_OUTPUTS, &m->mask, 1U, out, out_size);
+}
+
+size_t rc_encode_peer(const struct rc_peer *m, uint8_t *out, size_t out_size)
+{
+	uint8_t p[9];
+
+	put_u32(p, m->seq);
+	p[4] = m->slot;
+	p[5] = m->role;
+	p[6] = m->referee_ok;
+	put_u16(&p[7], m->step);
+	return rc_frame_encode(RC_MSG_PEER, p, sizeof(p), out, out_size);
+}
+
+int rc_decode_heartbeat(const struct rc_frame *f, struct rc_heartbeat *m)
+{
+	if ((f->type != RC_MSG_HEARTBEAT) || (f->len != 5U)) {
+		return -1;
+	}
+	m->seq = get_u32(f->payload);
+	m->role = f->payload[4];
+	return 0;
+}
+
+int rc_decode_status(const struct rc_frame *f, struct rc_status *m)
+{
+	if ((f->type != RC_MSG_STATUS) || (f->len != 7U)) {
+		return -1;
+	}
+	m->seq = get_u32(f->payload);
+	m->slot = f->payload[4];
+	m->granted_role = f->payload[5];
+	m->active_slot = f->payload[6];
+	return 0;
+}
+
+int rc_decode_set_outputs(const struct rc_frame *f, struct rc_set_outputs *m)
+{
+	if ((f->type != RC_MSG_SET_OUTPUTS) || (f->len != 1U)) {
+		return -1;
+	}
+	m->mask = f->payload[0];
+	return 0;
+}
+
+int rc_decode_peer(const struct rc_frame *f, struct rc_peer *m)
+{
+	if ((f->type != RC_MSG_PEER) || (f->len != 9U)) {
+		return -1;
+	}
+	m->seq = get_u32(f->payload);
+	m->slot = f->payload[4];
+	m->role = f->payload[5];
+	m->referee_ok = f->payload[6];
+	m->step = get_u16(&f->payload[7]);
+	return 0;
+}

@@ -54,4 +54,39 @@ void rc_parser_init(struct rc_parser *p);
 /* Feeds one byte; returns true when *out holds a complete, valid frame. */
 bool rc_parser_feed(struct rc_parser *p, uint8_t byte, struct rc_frame *out);
 
+struct rc_heartbeat {
+	uint32_t seq;
+	uint8_t role;
+};
+
+struct rc_status {
+	uint32_t seq;
+	uint8_t slot;
+	uint8_t granted_role;
+	uint8_t active_slot;
+};
+
+struct rc_set_outputs {
+	uint8_t mask;
+};
+
+struct rc_peer {
+	uint32_t seq;
+	uint8_t slot;
+	uint8_t role;
+	uint8_t referee_ok;
+	uint16_t step;
+};
+
+size_t rc_encode_heartbeat(const struct rc_heartbeat *m, uint8_t *out, size_t out_size);
+size_t rc_encode_status(const struct rc_status *m, uint8_t *out, size_t out_size);
+size_t rc_encode_set_outputs(const struct rc_set_outputs *m, uint8_t *out, size_t out_size);
+size_t rc_encode_peer(const struct rc_peer *m, uint8_t *out, size_t out_size);
+
+/* Return 0 on success, -1 if the frame type or length does not match. */
+int rc_decode_heartbeat(const struct rc_frame *f, struct rc_heartbeat *m);
+int rc_decode_status(const struct rc_frame *f, struct rc_status *m);
+int rc_decode_set_outputs(const struct rc_frame *f, struct rc_set_outputs *m);
+int rc_decode_peer(const struct rc_frame *f, struct rc_peer *m);
+
 #endif /* RC_PROTO_H_ */
