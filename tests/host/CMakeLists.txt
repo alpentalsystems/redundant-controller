@@ -42,11 +42,6 @@ add_executable(test_logrec test_logrec.c ${REPO}/common/logrec.c ${REPO}/common/
 target_include_directories(test_logrec PRIVATE ${REPO}/common/include)
 add_test(NAME logrec COMMAND test_logrec)
 
-add_executable(test_logstore test_logstore.c ${REPO}/central/src/logstore.c ${REPO}/common/logrec.c
-	       ${REPO}/common/proto.c)
-target_include_directories(test_logstore PRIVATE ${REPO}/common/include ${REPO}/central/src)
-add_test(NAME logstore COMMAND test_logstore)
-
 add_executable(logrec_sample logrec_sample.c ${REPO}/common/logrec.c ${REPO}/common/proto.c)
 target_include_directories(logrec_sample PRIVATE ${REPO}/common/include)
 add_test(NAME logrec_sample COMMAND logrec_sample ${CMAKE_CURRENT_BINARY_DIR}/logrec_sample.bin)

@@ -16,7 +16,7 @@ FIELDS = ("type", "seq", "io_time_ms", "mono_ms", "wall_ms", "slot", "role", "mo
 EVENTS = {0: "", 1: "started", 2: "role_changed", 3: "healthy", 4: "unhealthy",
           5: "referee_lost", 6: "referee_back", 7: "peer_lost", 8: "peer_back",
           9: "mode_changed", 10: "fault_set", 11: "fault_cleared", 12: "bit_item",
-          13: "tcp_output", 14: "slot_learned"}
+          13: "tcp_output", 14: "slot_learned", 15: "log_dropped"}
 FLAGS = ("healthy", "referee", "peer", "peer_healthy", "fault", "io_time_valid")
 BIT_ITEMS = ("io_link", "loop_timing", "cross_link", "supply_voltage", "cpu_temp")
 BIT_RESULTS = ("pass", "fail", "error", "not_run")
@@ -88,6 +88,8 @@ def detail_text(rec):
         item = d >> 8
         name = BIT_ITEMS[item] if item < len(BIT_ITEMS) else str(item)
         return "%s=%s" % (name, BIT_RESULTS[d & 3])
+    if event == "log_dropped":
+        return "%d records" % d
     if event == "tcp_output":
         action = ACTIONS.get(d >> 8, str(d >> 8))
         return "leds 0x%02x" % (d & 0xFF) if action == "leds" else action

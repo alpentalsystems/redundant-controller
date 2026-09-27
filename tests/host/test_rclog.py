@@ -54,6 +54,11 @@ class RclogTest(unittest.TestCase):
         self.assertEqual(rclog.detail_text(rec(event=2, detail=1)), "standby")
         self.assertEqual(rclog.detail_text(rec(event=13, detail=(1 << 8) | 0x55)), "leds 0x55")
 
+    def test_log_dropped_event(self):
+        r = rec(type=rclog.EVENT, event=15, detail=12)
+        self.assertEqual(rclog.EVENTS[15], "log_dropped")
+        self.assertEqual(rclog.detail_text(r), "12 records")
+
     @unittest.skipUnless(SAMPLE, "RC_LOG_SAMPLE not set")
     def test_c_written_sample(self):
         with open(SAMPLE, "rb") as f:

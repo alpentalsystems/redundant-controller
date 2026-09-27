@@ -32,6 +32,8 @@
 #define RC_LOG_EV_BIT_ITEM 12U
 #define RC_LOG_EV_TCP_OUTPUT 13U
 #define RC_LOG_EV_SLOT_LEARNED 14U
+/* Detail: records dropped because rc-logd could not take them. */
+#define RC_LOG_EV_LOG_DROPPED 15U
 
 /* BIT result codes 0-2 match enum bit_result; 3 = not run yet. */
 #define RC_LOG_BIT_NOT_RUN 3U

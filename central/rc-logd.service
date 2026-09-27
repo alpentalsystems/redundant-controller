@@ -6,8 +6,11 @@ After=rc-central.service
 ExecStart=/usr/bin/python3 -B /usr/local/lib/rc-central/rc_logd.py
 Restart=always
 RestartSec=2
+RuntimeDirectory=rc-logd
+StateDirectory=rc-central
 Nice=10
-IOSchedulingClass=idle
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 
 [Install]
 WantedBy=multi-user.target

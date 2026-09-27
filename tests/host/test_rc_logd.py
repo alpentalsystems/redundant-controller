@@ -2,6 +2,7 @@
 """Tests for central/rc_logd.py against a temporary log file."""
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -67,6 +68,91 @@ class LogdTest(unittest.TestCase):
         stop.set()
         t.join(1)
         self.assertFalse(t.is_alive())
+
+
+class RingFileTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "rc-log.bin")
+
+    def tearDown(self):
+        for name in os.listdir(self.dir):
+            os.unlink(os.path.join(self.dir, name))
+        os.rmdir(self.dir)
+
+    def seq_in_slot(self, slot):
+        with open(self.path, "rb") as f:
+            f.seek(slot * 64)
+            r = rclog.decode(f.read(64))
+        return None if r is None else r["seq"]
+
+    def test_new_file(self):
+        ring = rc_logd.RingFile(self.path, 8)
+        self.assertEqual(os.path.getsize(self.path), 8 * 64)
+        self.assertEqual([ring.append(rec(0)) for _ in range(3)], [0, 1, 2])
+        self.assertEqual((self.seq_in_slot(1), self.seq_in_slot(3)), (1, None))
+        ring.close()
+
+    def test_wrap_and_resume(self):
+        ring = rc_logd.RingFile(self.path, 4)
+        for _ in range(6):
+            ring.append(rec(0))
+        self.assertEqual([self.seq_in_slot(i) for i in range(4)], [4, 5, 2, 3])
+        ring.close()
+        ring = rc_logd.RingFile(self.path, 4)
+        self.assertEqual(ring.append(rec(0)), 6)
+        self.assertEqual(self.seq_in_slot(2), 6)
+        ring.close()
+
+    def test_corrupt_slot_ignored(self):
+        ring = rc_logd.RingFile(self.path, 4)
+        for _ in range(6):
+            ring.append(rec(0))
+        ring.close()
+        with open(self.path, "r+b") as f:
+            f.seek(64 + 20)
+            f.write(b"\xff")
+        ring = rc_logd.RingFile(self.path, 4)
+        self.assertEqual(ring.next_seq, 5)
+        ring.close()
+
+    def test_short_garbage_file_extended(self):
+        with open(self.path, "wb") as f:
+            f.write(b"\xa5" * 100)
+        ring = rc_logd.RingFile(self.path, 4)
+        self.assertEqual((os.path.getsize(self.path), ring.next_seq), (4 * 64, 0))
+        ring.close()
+
+
+class ReceiverTest(unittest.TestCase):
+    def test_records_from_socket_are_written(self):
+        d = tempfile.mkdtemp(dir="/tmp")
+        path, sock_path = os.path.join(d, "rc-log.bin"), os.path.join(d, "log.sock")
+        ring = rc_logd.RingFile(path, 8)
+        sock = rc_logd.open_socket(sock_path)
+        stop = threading.Event()
+        t = threading.Thread(target=rc_logd.receive_forever, args=(sock, ring, stop))
+        t.start()
+        out = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        out.sendto(b"not a record", sock_path)
+        out.sendto(rclog.encode(rec(0)), sock_path)
+        out.sendto(rclog.encode(rec(0)), sock_path)
+        for _ in range(100):
+            if ring.next_seq == 2:
+                break
+            stop.wait(0.01)
+        stop.set()
+        t.join(2)
+        out.close()
+        sock.close()
+        ring.close()
+        with open(path, "rb") as f:
+            records, invalid = rclog.decode_file(f.read())
+        for name in os.listdir(d):
+            os.unlink(os.path.join(d, name))
+        os.rmdir(d)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(([r["seq"] for r in records], invalid), ([0, 1], 0))
 
 
 if __name__ == "__main__":

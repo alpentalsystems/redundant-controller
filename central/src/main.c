@@ -11,13 +11,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "bit.h"
 #include "cmd.h"
-#include "logstore.h"
 #include "rc/logrec.h"
 #include "rc/proto.h"
 #include "role.h"
@@ -33,7 +33,8 @@
 #define TEMP_PATH "/sys/class/thermal/thermal_zone0/temp"
 /* On-demand BIT runs at most this often; extra RUN_BIT commands reuse the result. */
 #define RUN_BIT_MIN_INTERVAL_MS 500
-#define LOG_PATH "/var/lib/rc-central/rc-log.bin"
+/* rc-logd owns the file; the daemon only sends records, so SD card stalls cannot reach it. */
+#define LOG_SOCKET "/run/rc-logd/log.sock"
 #define LOG_SNAPSHOT_PERIOD_MS 100
 
 struct client {
@@ -61,8 +62,9 @@ struct daemon {
 	bool peer_recv_ok;
 	char uv_path[96];
 	struct client clients[TCP_CLIENTS];
-	struct logstore log;
-	bool log_open;
+	int log_fd;
+	struct sockaddr_un log_addr;
+	uint32_t log_dropped;
 	bool log_failed;
 };
 
@@ -299,16 +301,16 @@ static void send_run_bit(struct daemon *d)
 	write_all(d->serial, out, n);
 }
 
-/* Appends one record; logging never stops control, so errors are only reported. */
+/* Sends one record to rc-logd; logging never stops control, so errors are only reported. */
 static void log_record(struct daemon *d, int64_t t, uint8_t type, uint8_t event, uint32_t detail)
 {
 	struct rc_log_record r;
 	uint8_t bits[BIT_ITEMS];
 	uint32_t io_time = 0U;
 	bool io_valid = role_io_time(&d->s, t, &io_time);
-	int err;
+	uint8_t buf[RC_LOG_RECORD_SIZE];
 
-	if (!d->log_open) {
+	if (d->log_fd < 0) {
 		return;
 	}
 	for (int i = 0; i < BIT_ITEMS; i++) {
@@ -335,13 +337,25 @@ static void log_record(struct daemon *d, int64_t t, uint8_t type, uint8_t event,
 	r.mask = role_current_mask(&d->s);
 	r.event = event;
 	r.detail = detail;
-	err = logstore_append(&d->log, &r);
-	if ((err != 0) && !d->log_failed) {
-		printf("t=%lld event=log_write_failed error=\"%s\"\n", (long long)t, strerror(-err));
-		d->log_failed = true;
-	} else if ((err == 0) && d->log_failed) {
-		printf("t=%lld event=log_write_ok\n", (long long)t);
+	/* rc-logd assigns the seq. A record it cannot take right now is dropped and counted. */
+	rc_log_encode(&r, buf);
+	if (sendto(d->log_fd, buf, sizeof(buf), MSG_DONTWAIT, (struct sockaddr *)&d->log_addr,
+		   sizeof(d->log_addr)) < 0) {
+		d->log_dropped++;
+		if (!d->log_failed) {
+			printf("t=%lld event=log_send_failed error=\"%s\"\n", (long long)t,
+			       strerror(errno));
+			d->log_failed = true;
+		}
+		return;
+	}
+	if (d->log_failed) {
+		uint32_t dropped = d->log_dropped;
+
+		printf("t=%lld event=log_send_ok dropped=%lu\n", (long long)t, (unsigned long)dropped);
 		d->log_failed = false;
+		d->log_dropped = 0U;
+		log_record(d, t, RC_LOG_EVENT, RC_LOG_EV_LOG_DROPPED, dropped);
 	}
 }
 
@@ -667,7 +681,6 @@ int main(void)
 	int64_t next_hb;
 	int64_t next_bit;
 	int64_t next_snap;
-	int err;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	d.serial = open_serial();
@@ -682,17 +695,15 @@ int main(void)
 	d.peer_send_ok = true;
 	d.peer_recv_ok = true;
 	rc_parser_init(&d.parser);
+	d.log_fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	if (d.log_fd < 0) {
+		fprintf(stderr, "error: log disabled: socket: %s\n", strerror(errno));
+	}
+	d.log_addr.sun_family = AF_UNIX;
+	snprintf(d.log_addr.sun_path, sizeof(d.log_addr.sun_path), "%s", LOG_SOCKET);
 	start = now_ms();
 	role_init(&d.s, start);
 	bit_health_init(&d.health);
-	err = logstore_open(&d.log, LOG_PATH, LOGSTORE_SLOTS);
-	if (err != 0) {
-		fprintf(stderr, "error: log disabled: %s: %s\n", LOG_PATH, strerror(-err));
-	} else {
-		d.log_open = true;
-		printf("t=%lld event=log_open next_seq=%lu\n", (long long)start,
-		       (unsigned long)d.log.next_seq);
-	}
 	log_record(&d, start, RC_LOG_EVENT, RC_LOG_EV_STARTED, 0U);
 	next_snap = start;
 	d.last_hb_ms = start;
@@ -728,14 +739,6 @@ int main(void)
 		}
 		ev |= role_tick(&d.s, t);
 		log_events(ev, &d.s, t);
-		log_role_events(&d, ev, t);
-		if (t >= next_snap) {
-			log_record(&d, t, RC_LOG_SNAPSHOT, RC_LOG_EV_NONE, 0U);
-			next_snap += LOG_SNAPSHOT_PERIOD_MS;
-			if (next_snap <= t) {
-				next_snap = t + LOG_SNAPSHOT_PERIOD_MS;
-			}
-		}
 
 		if (t >= next_bit) {
 			run_bit(&d, t, true);
@@ -749,6 +752,15 @@ int main(void)
 			next_hb += HEARTBEAT_PERIOD_MS;
 			if (next_hb <= t) {
 				next_hb = t + HEARTBEAT_PERIOD_MS;
+			}
+		}
+		/* Log after the heartbeat, so a slow SD card write cannot delay it. */
+		log_role_events(&d, ev, t);
+		if (t >= next_snap) {
+			log_record(&d, t, RC_LOG_SNAPSHOT, RC_LOG_EV_NONE, 0U);
+			next_snap += LOG_SNAPSHOT_PERIOD_MS;
+			if (next_snap <= t) {
+				next_snap = t + LOG_SNAPSHOT_PERIOD_MS;
 			}
 		}
 		if ((fds[2].revents & POLLIN) != 0) {
