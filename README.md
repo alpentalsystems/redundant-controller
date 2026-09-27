@@ -7,6 +7,9 @@ replaced within 200 ms, simultaneous boot always ends with exactly one
 Active, and a broken link between the controllers never creates two
 Actives.
 
+Write-up (Korean, with an English summary):
+[라즈베리 파이 두 대와 STM32로 이중화(Active/Standby) 제어기 만들기](https://alpentalsystems.com/posts/2026-09-redundant-controller/)
+
 Design: [docs/2026-09-27-redundancy-core-design.md](docs/2026-09-27-redundancy-core-design.md)
 Measurements: [docs/test-log.md](docs/test-log.md)
 
