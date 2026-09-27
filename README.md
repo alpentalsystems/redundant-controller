@@ -30,6 +30,32 @@ Measurements: [docs/test-log.md](docs/test-log.md)
 
 Plus one Ethernet cable directly between the two Pis.
 
+Plus a jumper wire from PD12 to PD13 on the STM32F3 Discovery (I/O card
+BIT loopback).
+
+## Built-in test and commands
+
+Each controller runs its BIT 1 s after start (PBIT) and every second after
+that (CBIT): I/O card link and control loop timing (critical), cross-link,
+supply voltage, and CPU temperature. A controller that fails a critical
+item reports itself unhealthy, and the I/O card hands Active to a healthy
+Standby. The I/O card checks a GPIO loopback, its LED outputs, the sensors,
+the UART error rates, and the reset cause.
+
+The blue USER button toggles test mode. In test mode an operator drives the
+LEDs over TCP; in operational mode TCP is read-only.
+
+```sh
+tools/rcctl.py status          # both controllers side by side
+tools/rcctl.py bit             # PBIT and CBIT results
+tools/rcctl.py leds 0x55       # test mode only, sent to the Active
+tools/rcctl.py lamp            # lamp test
+tools/rcctl.py run-bit         # run BIT now
+```
+
+Raw protocol: `nc <controller> 5000`, then `STATUS`, `BIT`, `LEDS <hex>`,
+`LAMP_TEST`, or `RUN_BIT`, one per line; each reply is one JSON line.
+
 ## Build
 
 ```sh

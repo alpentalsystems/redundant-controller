@@ -87,3 +87,85 @@ their reset state (off); this was not checked by eye.
 
 A reflash of the I/O card while both controllers ran gave the same
 result (`- -> B` at t=1516 ms, B was Active before).
+
+# Sub-project 2: built-in test and TCP commands
+
+Date: 2026-09-27. Firmware from commit 189056e, daemon from commit
+b191e07. Both Pis still reported under-voltage (`rpi_volt`
+`in0_lcrit_alarm` = 1 most of the time). Output masks below come from the
+controllers' `STATUS` replies.
+
+## Experiment 1: PBIT
+
+Restart both daemons together.
+
+| Run | rc-a | rc-b | Result |
+|---|---|---|---|
+| 1 | `pbit result=pass`, healthy | `pbit result=pass`, healthy | pass |
+| 2 | same | same | pass |
+| 3 | same | same | pass |
+
+Every run: `io_link`, `loop_timing` (max interval 20-21 ms), `cross_link`
+and `cpu_temp` (47-49 C) pass; `supply_voltage` fails with
+`undervoltage=1`, as expected on this bench. It is not critical, so both
+controllers stay healthy. The flag comes and goes with load, so it
+sometimes passes a few seconds later.
+
+## Experiment 2: unhealthy handover
+
+Pull the Active controller's RX wire (Pi pin 10, I/O card to controller)
+for about 10 s, then reconnect.
+
+| Run | Handover | I/O card `gap_ms` | Fault to `unhealthy` | Fault to handover |
+|---|---|---|---|---|
+| 1 | B -> A | 2 | 444 ms | about 1.65 s |
+| 2 | A -> B | 3 | 536 ms | about 1.74 s |
+| 3 | B -> A | 3 | 524 ms | about 1.72 s |
+
+All pass (target under 2.5 s). The small `gap_ms` shows that the old
+Active was still sending heartbeats: the handover came from its health
+flag, not from a timeout. Sub-project 1 could not detect this fault. The
+fault-to-handover time is the controller's measured detection time plus
+the arbiter's 1.2 s hold. Each time, the new Active continued the chaser
+from the old Active's step. The old Active was healthy again about 3.5 s
+after the wire was reconnected, and it stayed Standby.
+
+## Experiment 3: test mode
+
+| Run | USER -> test | `leds 0x55` | Stop the Active's daemon | `lamp` | USER -> operational | Result |
+|---|---|---|---|---|---|---|
+| 1 | both `mode=test`, mask 0 | ok on A | B takes over, mask 85 (0x55) | back to 85 | chaser runs, `leds` refused | pass |
+| 2 | same | ok on B | A takes over, mask 85 | back to 85 | same | pass |
+| 3 | same | ok on A | B takes over, mask 85 | back to 85 | same | pass |
+
+In run 1, four clients also sent 35,648 `RUN_BIT` commands in 3 s to the
+Active. There was no `loop_timing` failure, and no health or role change.
+The rate limit and the rule that on-demand checks never change health
+held. Each accepted command still writes a log line.
+
+## Experiment 4: I/O card BIT
+
+Remove the PD12-PD13 loopback jumper for a few seconds, then put it back
+(one run, by owner decision; two pulls were recorded).
+
+| Pull | `io_bit: fail=0x01` | `io_bit: fail=0x00` | Role change | Result |
+|---|---|---|---|---|
+| 1 | t=490.4 s | t=494.4 s | none | pass |
+| 2 | t=497.4 s | t=499.4 s | none | pass |
+
+## Experiment 5: I/O card restart (regression)
+
+Hold the STM32 in reset for 3 s with OpenOCD while the system runs.
+
+| Run | Before | After | Controllers | Result |
+|---|---|---|---|---|
+| 1 | B Active | `- -> B` at 1525 ms | both `referee_lost`, `unhealthy`, `referee_back`, `healthy`; no `role_changed` | pass |
+| 2 | B Active | `- -> B` at 1510 ms | same | pass |
+| 3 | B Active | `- -> B` at 1516 ms | same | pass |
+
+The final review found that the first version checked `io_link` only at
+the moment of each check. A short I/O card stall could then be seen by
+only one controller and move Active. After the fix (the longest STATUS
+gap over the whole period), five 150 ms debugger stalls were each seen
+by both controllers (`io_link` fail, unhealthy, healthy again after 3 s),
+with no role change.
