@@ -46,3 +46,12 @@ add_executable(test_logstore test_logstore.c ${REPO}/central/src/logstore.c ${RE
 	       ${REPO}/common/proto.c)
 target_include_directories(test_logstore PRIVATE ${REPO}/common/include ${REPO}/central/src)
 add_test(NAME logstore COMMAND test_logstore)
+
+add_executable(logrec_sample logrec_sample.c ${REPO}/common/logrec.c ${REPO}/common/proto.c)
+target_include_directories(logrec_sample PRIVATE ${REPO}/common/include)
+add_test(NAME logrec_sample COMMAND logrec_sample ${CMAKE_CURRENT_BINARY_DIR}/logrec_sample.bin)
+set_tests_properties(logrec_sample PROPERTIES FIXTURES_SETUP log_sample)
+
+add_test(NAME rclog COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_rclog.py)
+set_tests_properties(rclog PROPERTIES FIXTURES_REQUIRED log_sample
+		     ENVIRONMENT RC_LOG_SAMPLE=${CMAKE_CURRENT_BINARY_DIR}/logrec_sample.bin)
