@@ -3690,7 +3690,7 @@ Pass: the Active logs `event=bit item=io_link result=fail` and `event=unhealthy`
 
 Pass: every step as described.
 
-- [ ] **Step 5: Experiment 4, I/O card BIT (3 runs)**
+- [ ] **Step 5: Experiment 4, I/O card BIT (1 run)**
 
 Ask the owner to remove the PD12-PD13 jumper, wait 3 s, and put it back.
 Pass: the console shows `io_bit: fail=0x01` within 1 s and `io_bit: fail=0x00` after it is back; `tools/rcctl.py bit` shows `io_fail=0x01` while it is out; no `active:` line.

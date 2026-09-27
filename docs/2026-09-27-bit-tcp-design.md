@@ -201,7 +201,7 @@ rules, BIT limits and hysteresis, every command in every state including
 malformed input, test-mode output sequences, new message fields, and
 button debounce.
 
-Bench experiments, 3 runs each, results in `docs/test-log.md`:
+Bench experiments, 3 runs each (experiment 4: one run), results in `docs/test-log.md`:
 
 1. **PBIT:** boot both controllers; both report PBIT results; supply
    voltage shows fail (non-critical) on the current bench.
