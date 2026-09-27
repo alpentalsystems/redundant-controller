@@ -1,4 +1,6 @@
 #include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/kernel.h>
@@ -6,13 +8,19 @@
 #include <zephyr/sys/ring_buffer.h>
 
 #include "arbiter.h"
+#include "io_bit.h"
 #include "leds.h"
+#include "mode.h"
 #include "rc/proto.h"
 
 LOG_MODULE_REGISTER(io_card, LOG_LEVEL_INF);
 
 #define WDT_TIMEOUT_MS 250U
 #define RX_BUF_SIZE 256U
+#define IO_BIT_PERIOD_MS 1000
+/* Loopback jumper: PD12 (output) to PD13 (input). */
+#define LOOP_OUT_PIN 12
+#define LOOP_IN_PIN 13
 
 struct link {
 	const struct device *dev;
@@ -22,6 +30,7 @@ struct link {
 	struct rc_parser parser;
 	uint32_t rx_dropped;
 	uint32_t outputs_rejected;
+	uint32_t errors_at_check;
 };
 
 static struct link links[2] = {
@@ -32,6 +41,14 @@ static struct link links[2] = {
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 static struct arbiter arb;
 static uint8_t applied_mask;
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
+static const struct device *const gpiod = DEVICE_DT_GET(DT_NODELABEL(gpiod));
+static const struct device *const accel = DEVICE_DT_GET(DT_NODELABEL(lsm303agr_accel));
+static const struct device *const magn = DEVICE_DT_GET(DT_NODELABEL(lsm303agr_magn));
+static struct mode_state mode;
+static uint8_t io_fail;
+static bool watchdog_reset;
+static bool bit_requested;
 
 static char slot_name(uint8_t slot)
 {
@@ -90,13 +107,13 @@ static void handle_frame(struct link *l, const struct rc_frame *f, int64_t now)
 		uint8_t out[RC_FRAME_MAX];
 		size_t n;
 
-		arb_on_heartbeat(&arb, l->slot, hb.role, true, now);
+		arb_on_heartbeat(&arb, l->slot, hb.role, hb.healthy != 0U, now);
 		st.seq = hb.seq;
 		st.slot = l->slot;
 		st.granted_role = arb_granted_role(&arb, l->slot);
 		st.active_slot = arb_active(&arb);
-		st.mode = RC_MODE_OPERATIONAL;
-		st.io_fail = 0U;
+		st.mode = mode.mode;
+		st.io_fail = io_fail;
 		n = rc_encode_status(&st, out, sizeof(out));
 		send_frame(l->dev, out, n);
 	} else if (rc_decode_set_outputs(f, &so) == 0) {
@@ -105,10 +122,89 @@ static void handle_frame(struct link *l, const struct rc_frame *f, int64_t now)
 		} else {
 			l->outputs_rejected++;
 		}
+	} else if (rc_decode_run_bit(f) == 0) {
+		if (arb_accepts_outputs(&arb, l->slot)) {
+			bit_requested = true;
+		} else {
+			LOG_WRN("slot %c: RUN_BIT ignored, not Active", slot_name(l->slot));
+		}
 	} else {
 		LOG_WRN("slot %c: unexpected frame type %u len %u", slot_name(l->slot), f->type,
 			f->len);
 	}
+}
+
+/* Drives the loopback output and reads the input: 1, 0, or a negative error. */
+static int loop_read(int level)
+{
+	int err = gpio_pin_set(gpiod, LOOP_OUT_PIN, level);
+
+	if (err != 0) {
+		return err;
+	}
+	k_busy_wait(20);
+	return gpio_pin_get(gpiod, LOOP_IN_PIN);
+}
+
+static void bit_run(int64_t now, bool pbit)
+{
+	struct io_bit_input in = {0};
+	int led = leds_get_mask();
+	uint8_t fail;
+
+	in.loop_high = (loop_read(1) == 1);
+	in.loop_low = (loop_read(0) != 0);
+	in.led_read = (led < 0) ? (uint8_t)~applied_mask : (uint8_t)led;
+	in.led_applied = applied_mask;
+	in.accel_ready = device_is_ready(accel);
+	in.magn_ready = device_is_ready(magn);
+	for (size_t i = 0; i < ARRAY_SIZE(links); i++) {
+		struct link *l = &links[i];
+		uint32_t total = l->parser.crc_errors + l->parser.len_errors;
+
+		in.uart_errors[i] = total - l->errors_at_check;
+		l->errors_at_check = total;
+	}
+	in.watchdog_reset = watchdog_reset;
+	fail = io_bit_eval(&in);
+	if (pbit) {
+		LOG_INF("t=%lld io_bit: pbit fail=0x%02x", now, fail);
+	} else if (fail != io_fail) {
+		LOG_INF("t=%lld io_bit: fail=0x%02x", now, fail);
+	}
+	io_fail = fail;
+}
+
+static int io_init(void)
+{
+	uint32_t cause;
+	int err;
+
+	if (!gpio_is_ready_dt(&button) || !device_is_ready(gpiod)) {
+		return -ENODEV;
+	}
+	err = gpio_pin_configure_dt(&button, GPIO_INPUT);
+	if (err == 0) {
+		err = gpio_pin_configure(gpiod, LOOP_OUT_PIN, GPIO_OUTPUT_INACTIVE);
+	}
+	if (err == 0) {
+		err = gpio_pin_configure(gpiod, LOOP_IN_PIN, GPIO_INPUT | GPIO_PULL_DOWN);
+	}
+	if (err != 0) {
+		return err;
+	}
+	err = hwinfo_get_reset_cause(&cause);
+	if (err != 0) {
+		LOG_ERR("reset cause unavailable: %d", err);
+	} else {
+		watchdog_reset = (cause & RESET_WATCHDOG) != 0U;
+		err = hwinfo_clear_reset_cause();
+		if (err != 0) {
+			LOG_ERR("reset cause clear failed: %d", err);
+		}
+	}
+	mode_init(&mode, gpio_pin_get_dt(&button) == 1, k_uptime_get());
+	return 0;
 }
 
 static int links_init(void)
@@ -157,6 +253,8 @@ static int wdt_start(void)
 
 int main(void)
 {
+	int64_t last_bit;
+	bool button_error = false;
 	int wdt_ch;
 	int err;
 
@@ -170,17 +268,25 @@ int main(void)
 		LOG_ERR("UART links not ready: %d", err);
 		return 0;
 	}
+	err = io_init();
+	if (err != 0) {
+		LOG_ERR("button or loopback pins not ready: %d", err);
+		return 0;
+	}
 	wdt_ch = wdt_start();
 	if (wdt_ch < 0) {
 		LOG_ERR("watchdog start failed: %d", wdt_ch);
 		return 0;
 	}
 	arb_init(&arb);
-	LOG_INF("io-card ready: A=USART2 PA2/PA3, B=UART4 PC10/PC11");
+	LOG_INF("io-card ready: A=USART2 PA2/PA3, B=UART4 PC10/PC11, loopback PD12->PD13");
+	last_bit = k_uptime_get();
+	bit_run(last_bit, true);
 
 	for (;;) {
 		int64_t now = k_uptime_get();
 		uint8_t before = arb_active(&arb);
+		int b;
 
 		for (size_t i = 0; i < ARRAY_SIZE(links); i++) {
 			struct link *l = &links[i];
@@ -207,6 +313,24 @@ int main(void)
 		}
 		if (arb_active(&arb) == RC_SLOT_NONE) {
 			set_outputs(0U);
+		}
+		b = gpio_pin_get_dt(&button);
+		if (b < 0) {
+			if (!button_error) {
+				LOG_ERR("button read failed: %d", b);
+				button_error = true;
+			}
+		} else {
+			button_error = false;
+			if (mode_on_sample(&mode, b == 1, now)) {
+				LOG_INF("t=%lld mode: %s", now,
+					(mode.mode == RC_MODE_TEST) ? "test" : "operational");
+			}
+		}
+		if (bit_requested || ((now - last_bit) >= IO_BIT_PERIOD_MS)) {
+			bit_run(now, false);
+			last_bit = now;
+			bit_requested = false;
 		}
 		err = wdt_feed(wdt, wdt_ch);
 		if (err != 0) {

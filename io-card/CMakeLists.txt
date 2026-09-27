@@ -11,5 +11,7 @@ target_sources(app PRIVATE
   src/main.c
   src/arbiter.c
   src/leds.c
+  src/io_bit.c
+  src/mode.c
   ../common/proto.c
 )

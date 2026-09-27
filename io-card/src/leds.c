@@ -41,3 +41,18 @@ int leds_set_mask(uint8_t mask)
 	}
 	return 0;
 }
+
+int leds_get_mask(void)
+{
+	int mask = 0;
+
+	for (int i = 0; i < 8; i++) {
+		int v = gpio_pin_get_dt(&ring[i]);
+
+		if (v < 0) {
+			return v;
+		}
+		mask |= (v & 1) << i;
+	}
+	return mask;
+}
