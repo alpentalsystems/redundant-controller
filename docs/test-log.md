@@ -169,3 +169,81 @@ only one controller and move Active. After the fix (the longest STATUS
 gap over the whole period), five 150 ms debugger stalls were each seen
 by both controllers (`io_link` fail, unhealthy, healthy again after 3 s),
 with no role change.
+
+# Sub-project 3: ring-buffer log and Mac viewer
+
+Dates: 2026-09-27 and 2026-09-28. Firmware and daemon from the fixes up to
+the rc-logd receive/write split. Both Pis still reported under-voltage.
+Times are I/O card times (`io_time_ms`) unless noted.
+
+## Experiment 1: logging load
+
+About 9.5 minutes after a daemon restart:
+
+| Controller | Snapshots per second | Seq gaps | Invalid slots | Result |
+|---|---|---|---|---|
+| A | 9.95 | none | 0 | pass |
+| B | 9.89 | none | 0 | pass |
+
+Each log also held one `log_dropped` event from the restart: the daemon
+started sending before `rc-logd` was up, counted the records it could not
+send, and reported them once.
+
+## Experiment 2: failover in the viewer
+
+Pull the Active controller's RX wire (Pi pin 10), then reconnect it.
+
+| I/O card time | Source | Event |
+|---|---|---|
+| 772,222 | A | `referee_lost` |
+| 772,916 | A | `io_link=fail`, `unhealthy` |
+| 774,120 | I/O card console | `active: A -> B gap_ms=3` |
+| 774,122 | B | `role_changed active` (2 ms after the console) |
+| 774,142 | A | `fault_set` (still believes it is Active and sees B Active) |
+| 781,845 | A | wire back: `referee_back`, `role_changed standby`, `fault_cleared` |
+| 784,897 | A | `healthy`, stays Standby |
+
+Pass: both logs merge on one timeline, and the log's handover time is
+within 5 ms of the console. Fault to handover was about 2.0 s (target
+2.5 s).
+
+## Experiment 3: power loss
+
+Pull the Active controller's power (B at that point), reconnect after
+about 30 s.
+
+- I/O card console: `active: B -> A gap_ms=101` at 803,239.
+- A: `peer_lost` at 803,249, `role_changed active` at 803,252 (the next
+  STATUS).
+- B's last saved record before the power loss: 802,295, that is 944 ms
+  before the handover.
+
+Pass (limit about 2 s: at most one 2 s flush interval can be lost).
+
+## Experiment 4: download under load
+
+Ten downloads of the full 10,485,760-byte log (five per controller) while
+the system ran: 37-44 s each over the Pi 3B's Wi-Fi (about 2 Mbit/s). No
+`loop_timing` failure, no health change, no role change. Pass.
+
+## Experiment 5: SD card stress
+
+Copy 300 MB to the Active controller's SD card (`dd ... conv=fsync`, 17 s).
+
+| Version | Result |
+|---|---|
+| Daemon writes the log itself | two log writes blocked 3,414 ms and 3,706 ms; `loop_timing` failed; the Active went unhealthy and B took over |
+| `rc-logd` writes the log (one thread receives, one writes) | no `loop_timing` failure, no role change, no dropped records |
+
+This result moved all file I/O out of the real-time daemon.
+
+## Other findings
+
+- **Startup scan:** with a full 10 MiB log and a cold cache, reading the
+  log at start took about 960 ms. When the daemon did this after starting
+  its heartbeat timer, PBIT failed `loop_timing`. The scan now happens in
+  `rc-logd`.
+- **Pi clocks after power-on:** the Pis have no battery-backed clock. After
+  a power-on they log with the last saved time (the previous evening)
+  until network time arrives. The I/O card boot ID kept the segments
+  correct regardless.
