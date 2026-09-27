@@ -37,3 +37,7 @@ target_include_directories(test_cmd PRIVATE ${REPO}/common/include ${REPO}/centr
 add_test(NAME cmd COMMAND test_cmd)
 
 add_test(NAME rcctl COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_rcctl.py)
+
+add_executable(test_logrec test_logrec.c ${REPO}/common/logrec.c ${REPO}/common/proto.c)
+target_include_directories(test_logrec PRIVATE ${REPO}/common/include)
+add_test(NAME logrec COMMAND test_logrec)
