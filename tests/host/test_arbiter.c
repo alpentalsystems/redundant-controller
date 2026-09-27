@@ -16,6 +16,24 @@ static void run(struct arbiter *a, int64_t from, int64_t to, bool send_a, uint8_
 	}
 }
 
+/* Both slots send every 20 ms with the given role and health. */
+static void run_h(struct arbiter *a, int64_t from, int64_t to, uint8_t role_a, bool healthy_a,
+		  uint8_t role_b, bool healthy_b)
+{
+	for (int64_t t = from; t < to; t += 20) {
+		arb_on_heartbeat(a, RC_SLOT_A, role_a, healthy_a, t);
+		arb_on_heartbeat(a, RC_SLOT_B, role_b, healthy_b, t);
+		(void)arb_tick(a, t);
+	}
+}
+
+/* Elects A with both healthy; returns at 2000 ms. */
+static void elect_a(struct arbiter *a)
+{
+	arb_init(a);
+	run_h(a, 0, 2000, RC_ROLE_UNKNOWN, true, RC_ROLE_UNKNOWN, true);
+}
+
 static void test_nobody_present(void)
 {
 	struct arbiter a;
@@ -138,6 +156,104 @@ static void test_invalid_slot_ignored(void)
 	CHECK(!arb_accepts_outputs(&a, 2U));
 }
 
+static void test_election_prefers_healthy(void)
+{
+	struct arbiter a;
+
+	arb_init(&a);
+	run_h(&a, 0, 2000, RC_ROLE_UNKNOWN, false, RC_ROLE_UNKNOWN, true);
+	CHECK(arb_active(&a) == RC_SLOT_B);
+}
+
+static void test_election_keeps_reported_active_when_both_unhealthy(void)
+{
+	struct arbiter a;
+
+	arb_init(&a);
+	run_h(&a, 0, 2000, RC_ROLE_STANDBY, false, RC_ROLE_ACTIVE, false);
+	CHECK(arb_active(&a) == RC_SLOT_B);
+}
+
+static void test_healthy_beats_unhealthy_reported_active(void)
+{
+	struct arbiter a;
+
+	arb_init(&a);
+	run_h(&a, 0, 2000, RC_ROLE_ACTIVE, false, RC_ROLE_STANDBY, true);
+	CHECK(arb_active(&a) == RC_SLOT_B);
+}
+
+static void test_unhealthy_active_hands_over_after_hold(void)
+{
+	struct arbiter a;
+
+	elect_a(&a);
+	CHECK(arb_active(&a) == RC_SLOT_A);
+	/* A unhealthy from 2000 ms: the hold ends at 3200 ms. */
+	run_h(&a, 2000, 3200, RC_ROLE_ACTIVE, false, RC_ROLE_STANDBY, true);
+	CHECK(arb_active(&a) == RC_SLOT_A);
+	run_h(&a, 3200, 3220, RC_ROLE_ACTIVE, false, RC_ROLE_STANDBY, true);
+	CHECK(arb_active(&a) == RC_SLOT_B);
+}
+
+static void test_recovered_slot_stays_standby(void)
+{
+	struct arbiter a;
+
+	elect_a(&a);
+	run_h(&a, 2000, 3300, RC_ROLE_ACTIVE, false, RC_ROLE_STANDBY, true);
+	CHECK(arb_active(&a) == RC_SLOT_B);
+	run_h(&a, 3300, 8000, RC_ROLE_STANDBY, true, RC_ROLE_ACTIVE, true);
+	CHECK(arb_active(&a) == RC_SLOT_B);
+}
+
+static void test_unhealthy_active_kept_when_other_unhealthy(void)
+{
+	struct arbiter a;
+
+	elect_a(&a);
+	run_h(&a, 2000, 8000, RC_ROLE_ACTIVE, false, RC_ROLE_STANDBY, false);
+	CHECK(arb_active(&a) == RC_SLOT_A);
+}
+
+static void test_unhealthy_active_kept_when_other_absent(void)
+{
+	struct arbiter a;
+
+	arb_init(&a);
+	run(&a, 0, 2000, true, RC_ROLE_UNKNOWN, false, 0U);
+	CHECK(arb_active(&a) == RC_SLOT_A);
+	for (int64_t t = 2000; t < 8000; t += 20) {
+		arb_on_heartbeat(&a, RC_SLOT_A, RC_ROLE_ACTIVE, false, t);
+		(void)arb_tick(&a, t);
+	}
+	CHECK(arb_active(&a) == RC_SLOT_A);
+}
+
+static void test_common_mode_recovery_does_not_move_active(void)
+{
+	struct arbiter a;
+
+	elect_a(&a);
+	/* Referee restart: both unhealthy, B recovers 800 ms before A. */
+	run_h(&a, 2000, 3000, RC_ROLE_ACTIVE, false, RC_ROLE_STANDBY, false);
+	run_h(&a, 3000, 3800, RC_ROLE_ACTIVE, false, RC_ROLE_STANDBY, true);
+	run_h(&a, 3800, 8000, RC_ROLE_ACTIVE, true, RC_ROLE_STANDBY, true);
+	CHECK(arb_active(&a) == RC_SLOT_A);
+}
+
+static void test_lost_active_hands_over_to_unhealthy_standby(void)
+{
+	struct arbiter a;
+
+	elect_a(&a);
+	for (int64_t t = 2000; t < 2300; t += 20) {
+		arb_on_heartbeat(&a, RC_SLOT_B, RC_ROLE_STANDBY, false, t);
+		(void)arb_tick(&a, t);
+	}
+	CHECK(arb_active(&a) == RC_SLOT_B);
+}
+
 int main(void)
 {
 	test_nobody_present();
@@ -150,5 +266,14 @@ int main(void)
 	test_no_fallback_when_a_returns();
 	test_both_lost_then_reelect();
 	test_invalid_slot_ignored();
+	test_election_prefers_healthy();
+	test_election_keeps_reported_active_when_both_unhealthy();
+	test_healthy_beats_unhealthy_reported_active();
+	test_unhealthy_active_hands_over_after_hold();
+	test_recovered_slot_stays_standby();
+	test_unhealthy_active_kept_when_other_unhealthy();
+	test_unhealthy_active_kept_when_other_absent();
+	test_common_mode_recovery_does_not_move_active();
+	test_lost_active_hands_over_to_unhealthy_standby();
 	return CHECK_DONE();
 }

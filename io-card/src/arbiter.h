@@ -8,6 +8,8 @@
 
 #define ARB_HB_TIMEOUT_MS 100
 #define ARB_ELECTION_WINDOW_MS 1500
+/* An unhealthy Active hands over only after the condition holds this long. */
+#define ARB_HEALTH_HOLD_MS 1200
 
 struct arb_slot {
 	bool heard;
@@ -21,6 +23,8 @@ struct arbiter {
 	uint8_t active;
 	bool electing;
 	int64_t election_start_ms;
+	bool handover_pending;
+	int64_t handover_since_ms;
 };
 
 void arb_init(struct arbiter *a);

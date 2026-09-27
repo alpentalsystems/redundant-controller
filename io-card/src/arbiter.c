@@ -38,22 +38,39 @@ bool arb_present(const struct arbiter *a, uint8_t slot, int64_t now_ms)
 	return a->slot[slot].heard && ((now_ms - a->slot[slot].last_rx_ms) <= ARB_HB_TIMEOUT_MS);
 }
 
+static bool healthy(const struct arbiter *a, uint8_t slot, int64_t now_ms)
+{
+	return arb_present(a, slot, now_ms) && a->slot[slot].healthy;
+}
+
+static bool claims_active(const struct arbiter *a, uint8_t slot)
+{
+	return a->slot[slot].reported_role == RC_ROLE_ACTIVE;
+}
+
 static uint8_t elect(const struct arbiter *a, int64_t now_ms)
 {
-	bool pa = arb_present(a, RC_SLOT_A, now_ms);
-	bool pb = arb_present(a, RC_SLOT_B, now_ms);
+	static const uint8_t order[2] = {RC_SLOT_A, RC_SLOT_B};
 
-	if (pa && (a->slot[RC_SLOT_A].reported_role == RC_ROLE_ACTIVE)) {
-		return RC_SLOT_A;
+	for (int i = 0; i < 2; i++) {
+		if (healthy(a, order[i], now_ms) && claims_active(a, order[i])) {
+			return order[i];
+		}
 	}
-	if (pb && (a->slot[RC_SLOT_B].reported_role == RC_ROLE_ACTIVE)) {
-		return RC_SLOT_B;
+	for (int i = 0; i < 2; i++) {
+		if (healthy(a, order[i], now_ms)) {
+			return order[i];
+		}
 	}
-	if (pa) {
-		return RC_SLOT_A;
+	for (int i = 0; i < 2; i++) {
+		if (arb_present(a, order[i], now_ms) && claims_active(a, order[i])) {
+			return order[i];
+		}
 	}
-	if (pb) {
-		return RC_SLOT_B;
+	for (int i = 0; i < 2; i++) {
+		if (arb_present(a, order[i], now_ms)) {
+			return order[i];
+		}
 	}
 	return RC_SLOT_NONE;
 }
@@ -63,10 +80,21 @@ bool arb_tick(struct arbiter *a, int64_t now_ms)
 	uint8_t before = a->active;
 
 	if (a->active != RC_SLOT_NONE) {
-		if (!arb_present(a, a->active, now_ms)) {
-			uint8_t o = other(a->active);
+		uint8_t o = other(a->active);
 
+		if (!arb_present(a, a->active, now_ms)) {
 			a->active = arb_present(a, o, now_ms) ? o : RC_SLOT_NONE;
+			a->handover_pending = false;
+		} else if (!a->slot[a->active].healthy && healthy(a, o, now_ms)) {
+			if (!a->handover_pending) {
+				a->handover_pending = true;
+				a->handover_since_ms = now_ms;
+			} else if ((now_ms - a->handover_since_ms) >= ARB_HEALTH_HOLD_MS) {
+				a->active = o;
+				a->handover_pending = false;
+			}
+		} else {
+			a->handover_pending = false;
 		}
 	} else if (!a->electing) {
 		if (arb_present(a, RC_SLOT_A, now_ms) || arb_present(a, RC_SLOT_B, now_ms)) {
