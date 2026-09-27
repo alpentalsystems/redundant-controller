@@ -11,3 +11,7 @@ set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 add_executable(test_proto test_proto.c ${REPO}/common/proto.c)
 target_include_directories(test_proto PRIVATE ${REPO}/common/include)
 add_test(NAME proto COMMAND test_proto)
+
+add_executable(test_arbiter test_arbiter.c ${REPO}/io-card/src/arbiter.c)
+target_include_directories(test_arbiter PRIVATE ${REPO}/common/include ${REPO}/io-card/src)
+add_test(NAME arbiter COMMAND test_arbiter)
