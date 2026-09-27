@@ -156,21 +156,24 @@ static uint32_t get_u32(const uint8_t *b)
 
 size_t rc_encode_heartbeat(const struct rc_heartbeat *m, uint8_t *out, size_t out_size)
 {
-	uint8_t p[5];
+	uint8_t p[6];
 
 	put_u32(p, m->seq);
 	p[4] = m->role;
+	p[5] = m->healthy;
 	return rc_frame_encode(RC_MSG_HEARTBEAT, p, sizeof(p), out, out_size);
 }
 
 size_t rc_encode_status(const struct rc_status *m, uint8_t *out, size_t out_size)
 {
-	uint8_t p[7];
+	uint8_t p[9];
 
 	put_u32(p, m->seq);
 	p[4] = m->slot;
 	p[5] = m->granted_role;
 	p[6] = m->active_slot;
+	p[7] = m->mode;
+	p[8] = m->io_fail;
 	return rc_frame_encode(RC_MSG_STATUS, p, sizeof(p), out, out_size);
 }
 
@@ -181,35 +184,45 @@ size_t rc_encode_set_outputs(const struct rc_set_outputs *m, uint8_t *out, size_
 
 size_t rc_encode_peer(const struct rc_peer *m, uint8_t *out, size_t out_size)
 {
-	uint8_t p[9];
+	uint8_t p[11];
 
 	put_u32(p, m->seq);
 	p[4] = m->slot;
 	p[5] = m->role;
 	p[6] = m->referee_ok;
 	put_u16(&p[7], m->step);
+	p[9] = m->healthy;
+	p[10] = m->test_mask;
 	return rc_frame_encode(RC_MSG_PEER, p, sizeof(p), out, out_size);
+}
+
+size_t rc_encode_run_bit(uint8_t *out, size_t out_size)
+{
+	return rc_frame_encode(RC_MSG_RUN_BIT, NULL, 0U, out, out_size);
 }
 
 int rc_decode_heartbeat(const struct rc_frame *f, struct rc_heartbeat *m)
 {
-	if ((f->type != RC_MSG_HEARTBEAT) || (f->len != 5U)) {
+	if ((f->type != RC_MSG_HEARTBEAT) || (f->len != 6U)) {
 		return -1;
 	}
 	m->seq = get_u32(f->payload);
 	m->role = f->payload[4];
+	m->healthy = f->payload[5];
 	return 0;
 }
 
 int rc_decode_status(const struct rc_frame *f, struct rc_status *m)
 {
-	if ((f->type != RC_MSG_STATUS) || (f->len != 7U)) {
+	if ((f->type != RC_MSG_STATUS) || (f->len != 9U)) {
 		return -1;
 	}
 	m->seq = get_u32(f->payload);
 	m->slot = f->payload[4];
 	m->granted_role = f->payload[5];
 	m->active_slot = f->payload[6];
+	m->mode = f->payload[7];
+	m->io_fail = f->payload[8];
 	return 0;
 }
 
@@ -224,7 +237,7 @@ int rc_decode_set_outputs(const struct rc_frame *f, struct rc_set_outputs *m)
 
 int rc_decode_peer(const struct rc_frame *f, struct rc_peer *m)
 {
-	if ((f->type != RC_MSG_PEER) || (f->len != 9U)) {
+	if ((f->type != RC_MSG_PEER) || (f->len != 11U)) {
 		return -1;
 	}
 	m->seq = get_u32(f->payload);
@@ -232,5 +245,12 @@ int rc_decode_peer(const struct rc_frame *f, struct rc_peer *m)
 	m->role = f->payload[5];
 	m->referee_ok = f->payload[6];
 	m->step = get_u16(&f->payload[7]);
+	m->healthy = f->payload[9];
+	m->test_mask = f->payload[10];
 	return 0;
+}
+
+int rc_decode_run_bit(const struct rc_frame *f)
+{
+	return ((f->type == RC_MSG_RUN_BIT) && (f->len == 0U)) ? 0 : -1;
 }

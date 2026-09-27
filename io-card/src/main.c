@@ -95,6 +95,8 @@ static void handle_frame(struct link *l, const struct rc_frame *f, int64_t now)
 		st.slot = l->slot;
 		st.granted_role = arb_granted_role(&arb, l->slot);
 		st.active_slot = arb_active(&arb);
+		st.mode = RC_MODE_OPERATIONAL;
+		st.io_fail = 0U;
 		n = rc_encode_status(&st, out, sizeof(out));
 		send_frame(l->dev, out, n);
 	} else if (rc_decode_set_outputs(f, &so) == 0) {
