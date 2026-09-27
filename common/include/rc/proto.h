@@ -79,6 +79,7 @@ struct rc_status {
 	uint8_t mode;
 	uint8_t io_fail;
 	uint32_t io_time_ms;
+	uint16_t io_boot_id; /* changes at every I/O card start; never 0 */
 };
 
 struct rc_set_outputs {

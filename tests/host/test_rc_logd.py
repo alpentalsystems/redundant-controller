@@ -21,7 +21,7 @@ import rclog  # noqa: E402
 def rec(seq):
     return dict(type=rclog.SNAPSHOT, seq=seq, io_time_ms=seq, mono_ms=seq, wall_ms=seq, slot=0,
                 role=2, mode=0, flags=0x20, active_slot=0, io_fail=0, bit_results=0, step=0,
-                mask=1, event=0, detail=0)
+                mask=1, event=0, detail=0, io_boot_id=0)
 
 
 class LogdTest(unittest.TestCase):

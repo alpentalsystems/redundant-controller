@@ -25,6 +25,7 @@ static struct rc_log_record sample(void)
 	r.mask = 0x55U;
 	r.event = RC_LOG_EV_ROLE_CHANGED;
 	r.detail = RC_ROLE_ACTIVE;
+	r.io_boot_id = 0xBEEFU;
 	return r;
 }
 
@@ -47,7 +48,8 @@ static void test_roundtrip(void)
 	rc_log_encode(&in, b);
 	CHECK(b[0] == 0x52U && b[1] == 0x4CU && b[2] == RC_LOG_VERSION);
 	CHECK(b[4] == 0x04U); /* little-endian seq */
-	for (size_t i = 44U; i < 62U; i++) {
+	CHECK(b[44] == 0xEFU && b[45] == 0xBEU); /* boot ID, low byte first */
+	for (size_t i = 46U; i < 62U; i++) {
 		CHECK(b[i] == 0U);
 	}
 	CHECK(rc_log_decode(b, &out) == 0);
@@ -58,6 +60,7 @@ static void test_roundtrip(void)
 	CHECK(out.io_fail == in.io_fail && out.bit_results == in.bit_results);
 	CHECK(out.step == in.step && out.mask == in.mask);
 	CHECK(out.event == in.event && out.detail == in.detail);
+	CHECK(out.io_boot_id == 0xBEEFU);
 }
 
 static void test_flipped_byte_rejected(void)

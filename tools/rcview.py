@@ -29,6 +29,7 @@ GAP_MS = 1000
 TIMELINE_EVENTS = {"started", "role_changed", "healthy", "unhealthy", "referee_lost",
                    "referee_back", "mode_changed", "fault_set", "fault_cleared"}
 COLUMNS = (["controller", "seq", "kind", "event", "detail", "io_time_ms", "io_estimated",
+            "io_boot_id",
             "wall", "mono_ms",
             "role", "mode", "healthy", "referee", "peer", "peer_healthy", "fault", "active",
             "io_fail", "step", "mask"] + list(rclog.BIT_ITEMS))
@@ -46,7 +47,8 @@ def controller_name(records, fallback):
 
 
 def split_segments(records):
-    """Splits one controller's records (sorted by seq) at I/O card restarts.
+    """Splits one controller's records (sorted by seq) at I/O card restarts: a new boot ID,
+    or the I/O card clock dropping by more than SEGMENT_DROP_MS.
 
     Records without I/O card time join the segment of the next record that has it and
     get an estimated I/O card time from the controller's own clock (io_estimated).
@@ -56,7 +58,8 @@ def split_segments(records):
         if not rclog.io_valid(r):
             pending.append(r)
             continue
-        if current is None or r["io_time_ms"] < last["io_time_ms"] - SEGMENT_DROP_MS:
+        if current is None or r["io_time_ms"] < last["io_time_ms"] - SEGMENT_DROP_MS or (
+                r["io_boot_id"] and last["io_boot_id"] and r["io_boot_id"] != last["io_boot_id"]):
             current = []
             segments.append(current)
         for p in pending:
@@ -93,23 +96,37 @@ def boot_time(segment):
     return int(statistics.median(offsets))
 
 
+def boot_id(segment):
+    """The I/O card boot ID of a segment, or 0 when its records predate the ID."""
+    return next((r["io_boot_id"] for r in segment if r["io_boot_id"]), 0)
+
+
+def same_run(boot, seg_id, m):
+    """Same I/O card run: equal boot IDs, or boot times within MATCH_WINDOW_MS without IDs."""
+    if seg_id and m["boot_id"]:
+        return seg_id == m["boot_id"]
+    return abs(boot - m["boot_wall"]) <= MATCH_WINDOW_MS
+
+
 def merge(logs):
     """logs: {name: records}. Returns merged segments ordered by I/O card boot time."""
     parts = []
     for name, records in logs.items():
         for seg in split_segments(records):
-            parts.append((boot_time(seg), name, seg))
+            parts.append((boot_time(seg), boot_id(seg), name, seg))
     parts.sort(key=lambda p: p[0])
     merged = []
-    for boot, name, seg in parts:
+    for boot, seg_id, name, seg in parts:
         target = None
         for m in merged:
-            if abs(boot - m["boot_wall"]) <= MATCH_WINDOW_MS and name not in m["controllers"]:
+            if same_run(boot, seg_id, m) and name not in m["controllers"]:
                 target = m
                 break
         if target is None:
-            target = {"boot_wall": boot, "controllers": [], "rows": []}
+            target = {"boot_wall": boot, "boot_id": seg_id, "controllers": [], "rows": []}
             merged.append(target)
+        elif not target["boot_id"]:
+            target["boot_id"] = seg_id
         target["controllers"].append(name)
         target["rows"].extend((name, r) for r in seg)
     for m in merged:
@@ -143,6 +160,7 @@ def row_values(name, r):
     return ([name, r["seq"], "event" if r["type"] == rclog.EVENT else "snapshot",
              rclog.EVENTS.get(r["event"], str(r["event"])), rclog.detail_text(r),
              r["io_time_ms"] if has_io_time(r) else None, r.get("io_estimated", False),
+             "0x%04x" % r["io_boot_id"] if r["io_boot_id"] else "",
              wall, r["mono_ms"],
              rclog.ROLES.get(r["role"], str(r["role"])),
              rclog.MODES.get(r["mode"], str(r["mode"])), f["healthy"], f["referee"],
@@ -315,8 +333,9 @@ def parse_filter(qs):
 def segment_info(i, seg):
     times = [r["io_time_ms"] for _, r in seg["rows"] if rclog.io_valid(r)]
     boot = datetime.datetime.fromtimestamp(seg["boot_wall"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
-    return {"id": i, "label": "I/O card boot %s (%s, %d rows)" % (
-                boot, ", ".join(sorted(seg["controllers"])), len(seg["rows"])),
+    boot_id_text = " id 0x%04x" % seg["boot_id"] if seg["boot_id"] else ""
+    return {"id": i, "label": "I/O card boot %s%s (%s, %d rows)" % (
+                boot, boot_id_text, ", ".join(sorted(seg["controllers"])), len(seg["rows"])),
             "controllers": sorted(seg["controllers"]), "rows": len(seg["rows"]),
             "io_from": min(times) if times else None, "io_to": max(times) if times else None}
 

@@ -55,10 +55,14 @@ docs, or posts.
 
 | Message | Direction | Payload (new field in bold) |
 |---|---|---|
-| STATUS (2) | I/O -> controller | seq (u32), slot (u8), granted role (u8), active slot (u8), mode (u8), io_fail (u8), **io_time_ms (u32)** |
+| STATUS (2) | I/O -> controller | seq (u32), slot (u8), granted role (u8), active slot (u8), mode (u8), io_fail (u8), **io_time_ms (u32)**, **io_boot_id (u16)** |
 
-The payload grows from 9 to 13 bytes. `io_time_ms` is the I/O card's
+The payload grows from 9 to 15 bytes. `io_time_ms` is the I/O card's
 uptime (`k_uptime_get()`, lower 32 bits) when the STATUS is built.
+`io_boot_id` identifies one I/O card run: the I/O card sets it when the
+first heartbeat arrives, from the CPU cycle counter (this STM32 has no
+random number generator; the arrival moment differs at every start), and
+never uses 0.
 
 ## Log record
 
@@ -84,7 +88,8 @@ uptime (`k_uptime_get()`, lower 32 bits) when the STATUS is built.
 | 38 | 1 | output mask (`role_current_mask`) |
 | 39 | 1 | event code (0 for snapshots) |
 | 40 | 4 | event detail |
-| 44 | 18 | reserved, zero |
+| 44 | 2 | io_boot_id from the last STATUS (0 before the first STATUS) |
+| 46 | 16 | reserved, zero |
 | 62 | 2 | CRC-16/CCITT-FALSE over bytes 0-61, low byte first |
 
 **I/O card time.** `io_time_ms` = the value in the last STATUS plus the
@@ -152,12 +157,15 @@ controller time since that STATUS arrived. Before the first STATUS, the
 - `rcview.py --open FILE [FILE ...]`: the same from saved files.
 - Decoding checks magic, version, and CRC; invalid slots are skipped and
   counted.
-- **Segments:** within one controller's log, ordered by `seq`, a drop in
-  `io_time_ms` of more than 1 s starts a new segment (I/O card restart).
+- **Segments:** within one controller's log, ordered by `seq`, a new
+  `io_boot_id` or a drop in `io_time_ms` of more than 1 s starts a new
+  segment (I/O card restart).
   Records without a valid `io_time_ms` go into the segment of the next
   valid record. Each segment's I/O card boot time is estimated as the
-  median of `wall_ms - io_time_ms`; segments from the two logs whose boot
-  times differ by at most 10 s are the same I/O card run and merge.
+  median of `wall_ms - io_time_ms`. Segments from the two logs with the
+  same `io_boot_id` are the same I/O card run and merge, whatever the
+  controllers' wall clocks say; segments without an ID fall back to boot
+  times within 10 s.
 - **Merge:** within a segment, rows are ordered by `io_time_ms`, then by
   controller, then by `seq`.
 - **Page:** segment selector, time range, filters (controller, snapshots

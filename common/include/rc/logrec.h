@@ -55,6 +55,7 @@ struct rc_log_record {
 	uint8_t mask;
 	uint8_t event;
 	uint32_t detail;
+	uint16_t io_boot_id; /* from STATUS; 0 = unknown */
 };
 
 /* Writes RC_LOG_RECORD_SIZE bytes: magic, version, fields, zero reserve, CRC. */

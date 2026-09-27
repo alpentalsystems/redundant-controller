@@ -69,6 +69,7 @@ void rc_log_encode(const struct rc_log_record *r, uint8_t *out)
 	out[38] = r->mask;
 	out[39] = r->event;
 	put_u32(&out[40], r->detail);
+	put_u16(&out[44], r->io_boot_id);
 	put_u16(&out[62], rc_crc16(out, 62U));
 }
 
@@ -95,6 +96,7 @@ int rc_log_decode(const uint8_t *in, struct rc_log_record *r)
 	r->mask = in[38];
 	r->event = in[39];
 	r->detail = get_u32(&in[40]);
+	r->io_boot_id = get_u16(&in[44]);
 	return 0;
 }
 

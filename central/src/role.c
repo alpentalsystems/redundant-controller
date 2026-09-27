@@ -40,6 +40,7 @@ unsigned role_on_status(struct role_state *s, const struct rc_status *m, int64_t
 	s->active_slot = m->active_slot;
 	s->io_fail = m->io_fail;
 	s->io_time_ms = m->io_time_ms;
+	s->io_boot_id = m->io_boot_id;
 	s->io_time_valid = true;
 	if (!s->referee_ok) {
 		s->referee_ok = true;

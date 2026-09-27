@@ -9,10 +9,11 @@ SNAPSHOT = 1
 EVENT = 2
 
 # magic, version, type, seq, io_time, mono, wall, slot, role, mode, flags,
-# active_slot, io_fail, bit_results, step, mask, event, detail, reserve, crc
-FMT = "<HBBIIQQBBBBBBHHBBI18xH"
+# active_slot, io_fail, bit_results, step, mask, event, detail, io_boot_id, reserve, crc
+FMT = "<HBBIIQQBBBBBBHHBBIH16xH"
 FIELDS = ("type", "seq", "io_time_ms", "mono_ms", "wall_ms", "slot", "role", "mode", "flags",
-          "active_slot", "io_fail", "bit_results", "step", "mask", "event", "detail")
+          "active_slot", "io_fail", "bit_results", "step", "mask", "event", "detail",
+          "io_boot_id")
 EVENTS = {0: "", 1: "started", 2: "role_changed", 3: "healthy", 4: "unhealthy",
           5: "referee_lost", 6: "referee_back", 7: "peer_lost", 8: "peer_back",
           9: "mode_changed", 10: "fault_set", 11: "fault_cleared", 12: "bit_item",
@@ -43,9 +44,9 @@ def decode(buf):
     v = struct.unpack(FMT, buf)
     if v[0] != MAGIC or v[1] != VERSION or v[2] not in (SNAPSHOT, EVENT):
         return None
-    if v[18] != crc16(buf[:62]):
+    if v[19] != crc16(buf[:62]):
         return None
-    return dict(zip(FIELDS, v[2:18]))
+    return dict(zip(FIELDS, v[2:19]))
 
 
 def decode_file(data):

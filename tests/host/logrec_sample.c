@@ -30,6 +30,7 @@ int main(int argc, char **argv)
 	r[0].bit_results = 0x0350U;
 	r[0].step = 513U;
 	r[0].mask = 0x55U;
+	r[0].io_boot_id = 0xBEEFU;
 	r[1] = r[0];
 	r[1].type = RC_LOG_EVENT;
 	r[1].seq = 8U;

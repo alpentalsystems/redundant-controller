@@ -19,11 +19,13 @@ import rclog  # noqa: E402
 BOOT = 1_790_000_000_000
 
 
-def rec(seq, io, slot=0, role=2, kind=rclog.SNAPSHOT, event=0, detail=0, boot=BOOT, valid=True):
+def rec(seq, io, slot=0, role=2, kind=rclog.SNAPSHOT, event=0, detail=0, boot=BOOT, valid=True,
+        boot_id=0):
     return dict(type=kind, seq=seq, io_time_ms=io if valid else 0, mono_ms=seq,
                 wall_ms=boot + io, slot=slot, role=role, mode=0,
                 flags=(0x20 if valid else 0) | 0x01, active_slot=0, io_fail=0,
-                bit_results=0, step=seq, mask=1, event=event, detail=detail)
+                bit_results=0, step=seq, mask=1, event=event, detail=detail,
+                io_boot_id=boot_id if valid else 0)
 
 
 def ev(seq, io, event, detail=0, slot=0, role=2, boot=BOOT):
@@ -56,6 +58,23 @@ class DataTest(unittest.TestCase):
         self.assertEqual(len(rcview.filter_rows(segs[0]["rows"], io_from=3_599_000)), 1)
         values = dict(zip(rcview.COLUMNS, rcview.row_values("A", started)))
         self.assertEqual((values["io_time_ms"], values["io_estimated"]), (3_600_000, True))
+
+    def test_split_on_boot_id_change_without_clock_drop(self):
+        # The controller was off while the I/O card restarted and ran past the old time.
+        segs = rcview.split_segments([rec(1, 1000, boot_id=0x11), rec(2, 1100, boot_id=0x11),
+                                      rec(3, 5000, boot_id=0x22), rec(4, 5100, boot_id=0x22)])
+        self.assertEqual([[r["seq"] for r in s] for s in segs], [[1, 2], [3, 4]])
+
+    def test_merge_by_boot_id_ignores_wall_clocks(self):
+        logs = {"A": [rec(1, 100, boot_id=0x11)],
+                "B": [rec(10, 200, slot=1, boot=BOOT + 7_200_000, boot_id=0x11)]}
+        segs = rcview.merge(logs)
+        self.assertEqual(len(segs), 1)
+        self.assertEqual(segs[0]["boot_id"], 0x11)
+
+    def test_merge_different_boot_ids_stay_apart(self):
+        logs = {"A": [rec(1, 100, boot_id=0x11)], "B": [rec(10, 200, slot=1, boot_id=0x22)]}
+        self.assertEqual(len(rcview.merge(logs)), 2)
 
     def test_merge_interleaves_by_io_time(self):
         logs = {"A": [rec(1, 100), rec(2, 300)],

@@ -345,7 +345,9 @@ static void test_io_time_estimate(void)
 	role_init(&s, 0);
 	CHECK(!role_io_time(&s, 50, &io));
 	m.io_time_ms = 5000U;
+	m.io_boot_id = 0x1234U;
 	(void)role_on_status(&s, &m, 100);
+	CHECK(s.io_boot_id == 0x1234U);
 	CHECK(role_io_time(&s, 130, &io) && (io == 5030U));
 	m.io_time_ms = 0xFFFFFFF0U; /* wraps like the I/O card's 32-bit clock */
 	(void)role_on_status(&s, &m, 200);

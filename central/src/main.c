@@ -337,6 +337,7 @@ static void log_record(struct daemon *d, int64_t t, uint8_t type, uint8_t event,
 	r.mask = role_current_mask(&d->s);
 	r.event = event;
 	r.detail = detail;
+	r.io_boot_id = io_valid ? d->s.io_boot_id : 0U;
 	/* rc-logd assigns the seq. A record it cannot take right now is dropped and counted. */
 	rc_log_encode(&r, buf);
 	if (sendto(d->log_fd, buf, sizeof(buf), MSG_DONTWAIT, (struct sockaddr *)&d->log_addr,

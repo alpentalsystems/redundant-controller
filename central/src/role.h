@@ -48,6 +48,7 @@ struct role_state {
 	int64_t last_out_ms;
 	int64_t max_status_gap_ms;
 	uint32_t io_time_ms;
+	uint16_t io_boot_id;
 	bool io_time_valid;
 };
 

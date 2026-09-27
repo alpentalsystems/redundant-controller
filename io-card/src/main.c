@@ -49,6 +49,7 @@ static struct mode_state mode;
 static uint8_t io_fail;
 static bool watchdog_reset;
 static bool bit_requested;
+static uint16_t boot_id;
 
 static char slot_name(uint8_t slot)
 {
@@ -107,6 +108,17 @@ static void handle_frame(struct link *l, const struct rc_frame *f, int64_t now)
 		uint8_t out[RC_FRAME_MAX];
 		size_t n;
 
+		if (boot_id == 0U) {
+			/* No RNG on this chip: the cycle count at the first heartbeat differs per start. */
+			uint32_t c = k_cycle_get_32();
+
+			boot_id = (uint16_t)(c ^ (c >> 16));
+			if (boot_id == 0U) {
+				boot_id = 1U;
+			}
+			LOG_INF("t=%lld boot_id=0x%04x", now, boot_id);
+		}
+
 		arb_on_heartbeat(&arb, l->slot, hb.role, hb.healthy != 0U, now);
 		st.seq = hb.seq;
 		st.slot = l->slot;
@@ -115,6 +127,7 @@ static void handle_frame(struct link *l, const struct rc_frame *f, int64_t now)
 		st.mode = mode.mode;
 		st.io_fail = io_fail;
 		st.io_time_ms = (uint32_t)now;
+		st.io_boot_id = boot_id;
 		n = rc_encode_status(&st, out, sizeof(out));
 		send_frame(l->dev, out, n);
 	} else if (rc_decode_set_outputs(f, &so) == 0) {

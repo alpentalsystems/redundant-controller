@@ -14,7 +14,7 @@ SAMPLE = os.environ.get("RC_LOG_SAMPLE")
 def rec(**kw):
     r = dict(type=rclog.SNAPSHOT, seq=1, io_time_ms=2, mono_ms=3, wall_ms=4, slot=0, role=2,
              mode=0, flags=0b100011, active_slot=0, io_fail=0, bit_results=0, step=5, mask=1,
-             event=0, detail=0)
+             event=0, detail=0, io_boot_id=0)
     r.update(kw)
     return r
 
@@ -72,6 +72,7 @@ class RclogTest(unittest.TestCase):
         self.assertEqual(r["wall_ms"], 1790000000123)
         self.assertEqual((r["slot"], r["role"], r["mode"]), (0, 2, 1))
         self.assertEqual((r["io_fail"], r["step"], r["mask"]), (1, 513, 0x55))
+        self.assertEqual(r["io_boot_id"], 0xBEEF)
         self.assertEqual(rclog.bit_results(r)["supply_voltage"], "fail")
         self.assertEqual(rclog.EVENTS[records[1]["event"]], "role_changed")
         self.assertEqual(rclog.detail_text(records[1]), "standby")
