@@ -57,3 +57,5 @@ set_tests_properties(rclog PROPERTIES FIXTURES_REQUIRED log_sample
 		     ENVIRONMENT RC_LOG_SAMPLE=${CMAKE_CURRENT_BINARY_DIR}/logrec_sample.bin)
 
 add_test(NAME rc_logd COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_rc_logd.py)
+
+add_test(NAME rcview COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_rcview.py)
