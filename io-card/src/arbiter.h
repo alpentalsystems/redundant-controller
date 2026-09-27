@@ -13,6 +13,7 @@ struct arb_slot {
 	bool heard;
 	int64_t last_rx_ms;
 	uint8_t reported_role;
+	bool healthy;
 };
 
 struct arbiter {
@@ -23,7 +24,8 @@ struct arbiter {
 };
 
 void arb_init(struct arbiter *a);
-void arb_on_heartbeat(struct arbiter *a, uint8_t slot, uint8_t reported_role, int64_t now_ms);
+void arb_on_heartbeat(struct arbiter *a, uint8_t slot, uint8_t reported_role, bool healthy,
+		      int64_t now_ms);
 
 /* Updates presence and the Active slot; returns true when the Active slot changed. */
 bool arb_tick(struct arbiter *a, int64_t now_ms);

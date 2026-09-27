@@ -7,10 +7,10 @@ static void run(struct arbiter *a, int64_t from, int64_t to, bool send_a, uint8_
 {
 	for (int64_t t = from; t < to; t += 20) {
 		if (send_a) {
-			arb_on_heartbeat(a, RC_SLOT_A, role_a, t);
+			arb_on_heartbeat(a, RC_SLOT_A, role_a, true, t);
 		}
 		if (send_b) {
-			arb_on_heartbeat(a, RC_SLOT_B, role_b, t);
+			arb_on_heartbeat(a, RC_SLOT_B, role_b, true, t);
 		}
 		(void)arb_tick(a, t);
 	}
@@ -88,7 +88,7 @@ static void test_failover_timing(void)
 	run(&a, 0, 2000, true, RC_ROLE_UNKNOWN, true, RC_ROLE_UNKNOWN);
 	CHECK(arb_active(&a) == RC_SLOT_A);
 	/* Last A heartbeat at 1980 ms; B keeps sending. */
-	arb_on_heartbeat(&a, RC_SLOT_B, RC_ROLE_STANDBY, 2080);
+	arb_on_heartbeat(&a, RC_SLOT_B, RC_ROLE_STANDBY, true, 2080);
 	CHECK(!arb_tick(&a, 2080)); /* 100 ms after A's last frame: still present */
 	CHECK(arb_active(&a) == RC_SLOT_A);
 	CHECK(arb_tick(&a, 2081)); /* 101 ms: lost, B takes over immediately */
@@ -129,8 +129,8 @@ static void test_invalid_slot_ignored(void)
 
 	arb_init(&a);
 	for (int64_t t = 0; t < 2000; t += 20) {
-		arb_on_heartbeat(&a, 2U, RC_ROLE_ACTIVE, t);
-		arb_on_heartbeat(&a, RC_SLOT_NONE, RC_ROLE_ACTIVE, t);
+		arb_on_heartbeat(&a, 2U, RC_ROLE_ACTIVE, true, t);
+		arb_on_heartbeat(&a, RC_SLOT_NONE, RC_ROLE_ACTIVE, true, t);
 		(void)arb_tick(&a, t);
 	}
 	CHECK(arb_active(&a) == RC_SLOT_NONE);

@@ -90,7 +90,7 @@ static void handle_frame(struct link *l, const struct rc_frame *f, int64_t now)
 		uint8_t out[RC_FRAME_MAX];
 		size_t n;
 
-		arb_on_heartbeat(&arb, l->slot, hb.role, now);
+		arb_on_heartbeat(&arb, l->slot, hb.role, true, now);
 		st.seq = hb.seq;
 		st.slot = l->slot;
 		st.granted_role = arb_granted_role(&arb, l->slot);

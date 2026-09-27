@@ -18,7 +18,8 @@ void arb_init(struct arbiter *a)
 	a->active = RC_SLOT_NONE;
 }
 
-void arb_on_heartbeat(struct arbiter *a, uint8_t slot, uint8_t reported_role, int64_t now_ms)
+void arb_on_heartbeat(struct arbiter *a, uint8_t slot, uint8_t reported_role, bool healthy,
+		      int64_t now_ms)
 {
 	if (!valid_slot(slot)) {
 		return;
@@ -26,6 +27,7 @@ void arb_on_heartbeat(struct arbiter *a, uint8_t slot, uint8_t reported_role, in
 	a->slot[slot].heard = true;
 	a->slot[slot].last_rx_ms = now_ms;
 	a->slot[slot].reported_role = reported_role;
+	a->slot[slot].healthy = healthy;
 }
 
 bool arb_present(const struct arbiter *a, uint8_t slot, int64_t now_ms)
