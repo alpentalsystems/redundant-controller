@@ -318,6 +318,24 @@ static void test_status_and_peer_fields_recorded(void)
 	CHECK(!s.peer_healthy);
 }
 
+static void test_status_age_covers_whole_period(void)
+{
+	struct role_state s;
+	struct rc_status m = status(RC_SLOT_A, RC_ROLE_ACTIVE);
+
+	role_init(&s, 0);
+	for (int64_t t = 0; t <= 400; t += 20) {
+		(void)role_on_status(&s, &m, t);
+	}
+	/* 150 ms gap, then STATUS again: a check at 1000 ms still sees it. */
+	for (int64_t t = 550; t <= 1000; t += 20) {
+		(void)role_on_status(&s, &m, t);
+	}
+	CHECK(role_take_status_age(&s, 1000) == 150);
+	CHECK(role_take_status_age(&s, 1010) == 20); /* reset by the previous take; last STATUS at 990 */
+	CHECK(role_take_status_age(&s, 1300) == 310); /* gap still open */
+}
+
 int main(void)
 {
 	test_initial_state();
@@ -338,5 +356,6 @@ int main(void)
 	test_new_active_keeps_test_mask();
 	test_mode_change_clears_test_mask();
 	test_status_and_peer_fields_recorded();
+	test_status_age_covers_whole_period();
 	return CHECK_DONE();
 }

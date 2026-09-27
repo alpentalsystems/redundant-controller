@@ -29,6 +29,8 @@
 #define TCP_CLIENTS 4
 #define HWMON_DIR "/sys/class/hwmon"
 #define TEMP_PATH "/sys/class/thermal/thermal_zone0/temp"
+/* On-demand BIT runs at most this often; extra RUN_BIT commands reuse the result. */
+#define RUN_BIT_MIN_INTERVAL_MS 500
 
 struct client {
 	int fd;
@@ -46,6 +48,7 @@ struct daemon {
 	struct bit_report pbit;
 	struct bit_report cbit;
 	uint32_t errors_at_check;
+	int64_t last_run_bit_ms;
 	int64_t last_hb_ms;
 	int64_t max_hb_interval_ms;
 	uint32_t hb_seq;
@@ -281,14 +284,26 @@ static void send_run_bit(struct daemon *d)
 	write_all(d->serial, out, n);
 }
 
-static void run_bit(struct daemon *d, int64_t t)
+/*
+ * Periodic checks close the measurement windows and update health. An
+ * on-demand check (RUN_BIT) only reads them, so it can neither shorten a
+ * window nor speed up recovery.
+ */
+static void run_bit(struct daemon *d, int64_t t, bool periodic)
 {
 	struct bit_report prev = d->cbit;
 	struct bit_input in;
 	uint32_t errors = d->parser.crc_errors + d->parser.len_errors;
 	long v = 0;
 
-	in.status_age_ms = t - d->s.last_status_ms;
+	if (periodic) {
+		in.status_age_ms = role_take_status_age(&d->s, t);
+	} else {
+		in.status_age_ms = t - d->s.last_status_ms;
+		if (d->s.max_status_gap_ms > in.status_age_ms) {
+			in.status_age_ms = d->s.max_status_gap_ms;
+		}
+	}
 	in.link_errors = errors - d->errors_at_check;
 	in.max_hb_interval_ms = d->max_hb_interval_ms;
 	in.peer_age_ms = d->s.peer_seen ? (t - d->s.last_peer_ms) : INT64_MAX;
@@ -296,11 +311,13 @@ static void run_bit(struct daemon *d, int64_t t)
 	in.undervoltage = in.undervoltage_ok && (v != 0);
 	in.temp_ok = read_long(TEMP_PATH, &v);
 	in.temp_mc = in.temp_ok ? (int32_t)v : 0;
-	d->errors_at_check = errors;
-	d->max_hb_interval_ms = 0;
+	if (periodic) {
+		d->errors_at_check = errors;
+		d->max_hb_interval_ms = 0;
+	}
 
 	bit_evaluate(&in, t, &d->cbit);
-	if (!d->health.pbit_done) {
+	if (periodic && !d->health.pbit_done) {
 		d->pbit = d->cbit;
 		printf("t=%lld event=pbit result=%s\n", (long long)t,
 		       bit_critical_pass(&d->pbit) ? "pass" : "fail");
@@ -313,6 +330,9 @@ static void run_bit(struct daemon *d, int64_t t)
 			printf("t=%lld event=bit item=%s result=%s value=\"%s\"\n", (long long)t,
 			       bit_item_name(i), bit_result_name(d->cbit.result[i]), value);
 		}
+	}
+	if (!periodic) {
+		return;
 	}
 	if (bit_health_update(&d->health, &d->cbit) || !prev.valid) {
 		printf("t=%lld slot=%c event=%s\n", (long long)t, slot_name(d->s.slot),
@@ -355,8 +375,11 @@ static size_t handle_line(struct daemon *d, const char *line, int64_t t, char *o
 		role_start_lamp_test(&d->s, t);
 		break;
 	case CMD_ACT_RUN_BIT:
-		run_bit(d, t);
-		send_run_bit(d);
+		if ((t - d->last_run_bit_ms) >= RUN_BIT_MIN_INTERVAL_MS) {
+			d->last_run_bit_ms = t;
+			run_bit(d, t, false);
+			send_run_bit(d);
+		}
 		break;
 	case CMD_ACT_NONE:
 		break;
@@ -594,7 +617,7 @@ int main(void)
 		log_events(ev, &d.s, t);
 
 		if (t >= next_bit) {
-			run_bit(&d, t);
+			run_bit(&d, t, true);
 			next_bit += BIT_PERIOD_MS;
 			if (next_bit <= t) {
 				next_bit = t + BIT_PERIOD_MS;

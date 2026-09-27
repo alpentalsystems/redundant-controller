@@ -75,6 +75,21 @@ class RcctlTest(unittest.TestCase):
         self.assertEqual(host, b.addr)
         self.assertEqual(reply, OK)
 
+    def test_prefers_active_confirmed_by_referee(self):
+        # A lost its referee link and still believes it is Active; the card chose B.
+        stale = {"ok": True, "role": "active", "slot": "A", "referee": False, "active": "A"}
+        real = {"ok": True, "role": "active", "slot": "B", "referee": True, "active": "B"}
+        a = FakeController({"STATUS": stale, "LEDS": {"ok": False, "error": "referee lost"}})
+        b = FakeController({"STATUS": real, "LEDS": OK})
+        try:
+            host, reply = rcctl.send_to_active([a.addr, b.addr], "LEDS 0x55")
+        finally:
+            a.close()
+            b.close()
+        self.assertEqual(host, b.addr)
+        self.assertEqual(reply, OK)
+        self.assertNotIn("LEDS 0x55", a.lines)
+
     def test_unreachable_controller_is_reported(self):
         b = FakeController({"STATUS": ACTIVE})
         dead = FakeController({})

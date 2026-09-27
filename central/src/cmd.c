@@ -210,6 +210,10 @@ size_t cmd_handle(const char *line, const struct cmd_view *v, struct cmd_result 
 	if (v->mode != RC_MODE_TEST) {
 		return reply_error("operational mode", out, out_size);
 	}
+	/* Without STATUS the grant may have moved; the I/O card would drop our outputs. */
+	if (!v->referee_ok) {
+		return reply_error("referee lost", out, out_size);
+	}
 	if (leds) {
 		if ((n != 2) || !parse_mask(arg, &res->leds)) {
 			return reply_error("bad value", out, out_size);

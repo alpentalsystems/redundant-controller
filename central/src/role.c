@@ -33,6 +33,9 @@ unsigned role_on_status(struct role_state *s, const struct rc_status *m, int64_t
 {
 	unsigned ev = 0U;
 
+	if ((now_ms - s->last_status_ms) > s->max_status_gap_ms) {
+		s->max_status_gap_ms = now_ms - s->last_status_ms;
+	}
 	s->last_status_ms = now_ms;
 	s->active_slot = m->active_slot;
 	s->io_fail = m->io_fail;
@@ -178,4 +181,15 @@ uint8_t role_current_mask(const struct role_state *s)
 		return s->test_mask;
 	}
 	return (uint8_t)(1U << (s->step % 8U));
+}
+
+int64_t role_take_status_age(struct role_state *s, int64_t now_ms)
+{
+	int64_t age = now_ms - s->last_status_ms;
+
+	if (s->max_status_gap_ms > age) {
+		age = s->max_status_gap_ms;
+	}
+	s->max_status_gap_ms = 0;
+	return age;
 }

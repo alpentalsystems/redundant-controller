@@ -46,6 +46,7 @@ struct role_state {
 	int64_t lamp_start_ms;
 	uint8_t out_mask;
 	int64_t last_out_ms;
+	int64_t max_status_gap_ms;
 };
 
 void role_init(struct role_state *s, int64_t now_ms);
@@ -68,5 +69,12 @@ bool role_test_output_due(struct role_state *s, int64_t now_ms, uint8_t *mask);
 
 /* The operator mask in test mode, else the chaser position. */
 uint8_t role_current_mask(const struct role_state *s);
+
+/*
+ * Longest time without STATUS since the previous call, including the gap
+ * still open at now_ms. BIT uses it so that every gap is seen within one
+ * check period, whatever the check phase.
+ */
+int64_t role_take_status_age(struct role_state *s, int64_t now_ms);
 
 #endif /* ROLE_H_ */

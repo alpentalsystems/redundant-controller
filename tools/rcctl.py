@@ -47,10 +47,19 @@ def query_all(hosts, line):
     return {h: safe_request(h, line) for h in hosts}
 
 
+def rank(status):
+    """0: Active confirmed by the referee, 1: claims Active, 2: anything else."""
+    if status.get("role") != "active":
+        return 2
+    if status.get("referee") and status.get("active") == status.get("slot"):
+        return 0
+    return 1
+
+
 def send_to_active(hosts, line):
     """Sends line to the controller reporting Active; tries the other once on 'not active'."""
     status = query_all(hosts, "STATUS")
-    order = sorted(hosts, key=lambda h: status[h].get("role") != "active")
+    order = sorted(hosts, key=lambda h: rank(status[h]))
     host, reply = order[0], {"ok": False, "error": "no controllers"}
     for host in order[:2]:
         reply = safe_request(host, line)

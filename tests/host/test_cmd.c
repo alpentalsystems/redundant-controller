@@ -155,6 +155,19 @@ static void test_linebuf(void)
 	CHECK(strcmp(out, "{\"ok\":false,\"error\":\"line too long\"}\n") == 0);
 }
 
+static void test_output_refused_without_referee(void)
+{
+	struct cmd_view v = view(RC_ROLE_ACTIVE, RC_MODE_TEST);
+	struct cmd_result res;
+
+	v.referee_ok = false;
+	CHECK(strcmp(run("LEDS 0x55", &v, &res), "{\"ok\":false,\"error\":\"referee lost\"}\n") ==
+	      0);
+	CHECK(res.action == CMD_ACT_NONE);
+	run("STATUS", &v, &res);
+	CHECK(strstr(out, "\"referee\":false") != NULL);
+}
+
 int main(void)
 {
 	test_status();
@@ -165,5 +178,6 @@ int main(void)
 	test_unknown_commands();
 	test_bit_reply();
 	test_linebuf();
+	test_output_refused_without_referee();
 	return CHECK_DONE();
 }
