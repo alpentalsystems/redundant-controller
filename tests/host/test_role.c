@@ -12,9 +12,26 @@ static struct rc_status status(uint8_t slot, uint8_t granted)
 static struct rc_peer peer(uint8_t slot, uint8_t role, uint16_t step)
 {
 	struct rc_peer m = {.seq = 1U, .slot = slot, .role = role, .referee_ok = 1U,
-			    .step = step};
+			    .step = step, .healthy = 1U};
 
 	return m;
+}
+
+static struct rc_status status_mode(uint8_t slot, uint8_t granted, uint8_t mode)
+{
+	struct rc_status m = status(slot, granted);
+
+	m.mode = mode;
+	return m;
+}
+
+/* Slot A granted Active at time t in operational mode. */
+static void make_active(struct role_state *s, int64_t t)
+{
+	struct rc_status m = status(RC_SLOT_A, RC_ROLE_ACTIVE);
+
+	role_init(s, 0);
+	(void)role_on_status(s, &m, t);
 }
 
 static void test_initial_state(void)
@@ -176,6 +193,131 @@ static void test_peer_without_referee_is_not_a_conflict(void)
 	CHECK(role_may_drive(&s));
 }
 
+static void test_test_mode_pauses_chaser(void)
+{
+	struct role_state s;
+	struct rc_status m = status_mode(RC_SLOT_A, RC_ROLE_ACTIVE, RC_MODE_TEST);
+	uint8_t mask = 0xAAU;
+	unsigned ev;
+
+	make_active(&s, 0);
+	ev = role_on_status(&s, &m, 1000);
+	CHECK((ev & ROLE_EV_MODE_CHANGED) != 0U);
+	CHECK(s.mode == RC_MODE_TEST);
+	CHECK(!role_chaser_due(&s, 1500, &mask));
+	CHECK(role_test_output_due(&s, 1500, &mask));
+	CHECK(mask == 0x00U);
+}
+
+static void test_operator_mask_sent_and_refreshed(void)
+{
+	struct role_state s;
+	struct rc_status m = status_mode(RC_SLOT_A, RC_ROLE_ACTIVE, RC_MODE_TEST);
+	uint8_t mask = 0U;
+
+	make_active(&s, 0);
+	(void)role_on_status(&s, &m, 1000);
+	(void)role_test_output_due(&s, 1000, &mask);
+	role_set_test_mask(&s, 0x55U, 1050);
+	CHECK(role_test_output_due(&s, 1050, &mask));
+	CHECK(mask == 0x55U);
+	CHECK(!role_test_output_due(&s, 1100, &mask));
+	CHECK(role_test_output_due(&s, 1250, &mask)); /* refresh every chaser period */
+	CHECK(mask == 0x55U);
+	CHECK(role_current_mask(&s) == 0x55U);
+}
+
+static void test_lamp_test_sequence(void)
+{
+	struct role_state s;
+	struct rc_status m = status_mode(RC_SLOT_A, RC_ROLE_ACTIVE, RC_MODE_TEST);
+	uint8_t mask = 0U;
+
+	make_active(&s, 0);
+	(void)role_on_status(&s, &m, 1000);
+	role_set_test_mask(&s, 0x0FU, 1000);
+	(void)role_test_output_due(&s, 1000, &mask);
+	role_start_lamp_test(&s, 2000);
+	CHECK(role_test_output_due(&s, 2000, &mask) && (mask == 0xFFU));
+	CHECK(role_test_output_due(&s, 3000, &mask) && (mask == 0x00U));
+	CHECK(role_test_output_due(&s, 4000, &mask) && (mask == 0x0FU));
+	CHECK(!s.lamp_active);
+}
+
+static void test_chaser_resumes_after_test_mode(void)
+{
+	struct role_state s;
+	struct rc_status test = status_mode(RC_SLOT_A, RC_ROLE_ACTIVE, RC_MODE_TEST);
+	struct rc_status op = status(RC_SLOT_A, RC_ROLE_ACTIVE);
+	uint8_t mask = 0U;
+	uint16_t paused;
+
+	make_active(&s, 0);
+	CHECK(role_chaser_due(&s, 0, &mask));
+	paused = s.step;
+	(void)role_on_status(&s, &test, 100);
+	CHECK((role_on_status(&s, &op, 5000) & ROLE_EV_MODE_CHANGED) != 0U);
+	CHECK(role_chaser_due(&s, 5000, &mask));
+	CHECK(s.step == (uint16_t)(paused + 1U));
+	CHECK(mask == (uint8_t)(1U << (s.step % 8U)));
+	CHECK(role_current_mask(&s) == mask);
+}
+
+static void test_new_active_keeps_test_mask(void)
+{
+	struct role_state s;
+	struct rc_status sb = status_mode(RC_SLOT_B, RC_ROLE_STANDBY, RC_MODE_TEST);
+	struct rc_status act = status_mode(RC_SLOT_B, RC_ROLE_ACTIVE, RC_MODE_TEST);
+	struct rc_peer p = peer(RC_SLOT_A, RC_ROLE_ACTIVE, 42U);
+	uint8_t mask = 0U;
+
+	role_init(&s, 0);
+	(void)role_on_status(&s, &sb, 10);
+	p.test_mask = 0x55U;
+	(void)role_on_peer(&s, &p, 20);
+	CHECK(!role_test_output_due(&s, 30, &mask)); /* a Standby never drives */
+	(void)role_on_status(&s, &act, 200);
+	CHECK(role_test_output_due(&s, 200, &mask));
+	CHECK(mask == 0x55U);
+	CHECK(s.step == 42U);
+}
+
+static void test_mode_change_clears_test_mask(void)
+{
+	struct role_state s;
+	struct rc_status test = status_mode(RC_SLOT_A, RC_ROLE_ACTIVE, RC_MODE_TEST);
+	struct rc_status op = status(RC_SLOT_A, RC_ROLE_ACTIVE);
+	uint8_t mask = 0xAAU;
+
+	make_active(&s, 0);
+	(void)role_on_status(&s, &test, 1000);
+	role_set_test_mask(&s, 0x55U, 1000);
+	(void)role_on_status(&s, &op, 2000);
+	(void)role_on_status(&s, &test, 3000);
+	CHECK(s.test_mask == 0U);
+	CHECK(role_test_output_due(&s, 3000, &mask));
+	CHECK(mask == 0x00U);
+}
+
+static void test_status_and_peer_fields_recorded(void)
+{
+	struct role_state s;
+	struct rc_status m = status(RC_SLOT_A, RC_ROLE_ACTIVE);
+	struct rc_peer p = peer(RC_SLOT_B, RC_ROLE_STANDBY, 0U);
+
+	role_init(&s, 0);
+	CHECK(s.active_slot == RC_SLOT_NONE);
+	m.io_fail = 0x21U;
+	m.active_slot = RC_SLOT_A;
+	(void)role_on_status(&s, &m, 10);
+	CHECK(s.io_fail == 0x21U && s.active_slot == RC_SLOT_A);
+	(void)role_on_peer(&s, &p, 20);
+	CHECK(s.peer_healthy);
+	p.healthy = 0U;
+	(void)role_on_peer(&s, &p, 40);
+	CHECK(!s.peer_healthy);
+}
+
 int main(void)
 {
 	test_initial_state();
@@ -189,5 +331,12 @@ int main(void)
 	test_peer_lost();
 	test_step_wraps_without_jump();
 	test_peer_without_referee_is_not_a_conflict();
+	test_test_mode_pauses_chaser();
+	test_operator_mask_sent_and_refreshed();
+	test_lamp_test_sequence();
+	test_chaser_resumes_after_test_mode();
+	test_new_active_keeps_test_mask();
+	test_mode_change_clears_test_mask();
+	test_status_and_peer_fields_recorded();
 	return CHECK_DONE();
 }

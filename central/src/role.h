@@ -9,6 +9,7 @@
 #define ROLE_REFEREE_TIMEOUT_MS 100
 #define ROLE_PEER_TIMEOUT_MS 100
 #define ROLE_CHASER_PERIOD_MS 200
+#define ROLE_LAMP_STEP_MS 1000
 
 #define ROLE_EV_ROLE_CHANGED (1U << 0)
 #define ROLE_EV_REFEREE_LOST (1U << 1)
@@ -18,6 +19,7 @@
 #define ROLE_EV_FAULT_SET (1U << 5)
 #define ROLE_EV_FAULT_CLEARED (1U << 6)
 #define ROLE_EV_SLOT_LEARNED (1U << 7)
+#define ROLE_EV_MODE_CHANGED (1U << 8)
 
 struct role_state {
 	uint8_t slot;
@@ -34,6 +36,16 @@ struct role_state {
 	int64_t active_since_ms;
 	uint16_t step;
 	int64_t last_step_ms;
+	uint8_t active_slot;
+	uint8_t mode;
+	uint8_t io_fail;
+	uint8_t test_mask;
+	uint8_t peer_test_mask;
+	bool peer_healthy;
+	bool lamp_active;
+	int64_t lamp_start_ms;
+	uint8_t out_mask;
+	int64_t last_out_ms;
 };
 
 void role_init(struct role_state *s, int64_t now_ms);
@@ -44,5 +56,17 @@ bool role_may_drive(const struct role_state *s);
 
 /* When driving and a step is due, advances the chaser and returns true with *mask set. */
 bool role_chaser_due(struct role_state *s, int64_t now_ms, uint8_t *mask);
+
+/* Operator output for test mode; takes effect at once. */
+void role_set_test_mask(struct role_state *s, uint8_t mask, int64_t now_ms);
+
+/* All on for ROLE_LAMP_STEP_MS, all off for ROLE_LAMP_STEP_MS, then the operator mask. */
+void role_start_lamp_test(struct role_state *s, int64_t now_ms);
+
+/* In test mode while driving: returns true with *mask set when the output is due. */
+bool role_test_output_due(struct role_state *s, int64_t now_ms, uint8_t *mask);
+
+/* The operator mask in test mode, else the chaser position. */
+uint8_t role_current_mask(const struct role_state *s);
 
 #endif /* ROLE_H_ */
