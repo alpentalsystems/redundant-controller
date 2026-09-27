@@ -98,12 +98,13 @@ timeout) and the role the controller reports.
 
 - **Heartbeat timeout:** a slot is lost when no valid frame arrives for
   100 ms.
-- **Boot window:** after the I/O card starts, it collects frames for
-  1500 ms before granting Active.
-  - If a controller reports that it is already Active (the I/O card
-    rebooted under a running system), that controller keeps Active.
-  - Otherwise, if both slots are present, slot A gets Active.
-  - Otherwise, the only present slot gets Active.
+- **Election window:** when no slot is Active and a controller appears,
+  the I/O card waits 1500 ms from that first appearance, then grants
+  Active: a present slot that reports Active first (slot A if both),
+  otherwise slot A, otherwise slot B. During the window STATUS grants
+  role 0 (unknown), and a controller keeps its current role on
+  "unknown", so an I/O card reboot under a running system causes no role
+  change.
 - **Failover:** when the Active slot is lost and the other slot is present,
   the other slot gets Active immediately.
 - **No fallback:** when a lost slot returns, it gets Standby. Active never
@@ -140,7 +141,8 @@ timeout) and the role the controller reports.
 | payload | len | little-endian fields |
 | crc | 2 | CRC-16/CCITT-FALSE over type, len, payload |
 
-Frames with a bad CRC or length are dropped and counted.
+Frames with a bad CRC or length are dropped and counted. The CRC is sent
+low byte first.
 
 | Type | Direction | Payload |
 |---|---|---|
@@ -152,15 +154,18 @@ Roles: 0 = unknown, 1 = standby, 2 = active.
 
 ### Cross-link heartbeat (controller <-> controller)
 
-UDP on the direct Ethernet link (10.0.0.1 for slot A, 10.0.0.2 for slot B,
-set from the slot the I/O card reports), every 20 ms: slot, granted role,
-seq, referee link state, chaser step.
+UDP to the IPv6 link-local multicast group `ff02::1` on `eth0`, port 47000
+(no address configuration needed), every 20 ms: slot, granted role, seq,
+referee link state, chaser step. A controller ignores messages carrying its
+own slot. A send failure on the cross-link is logged and never stops the
+controller. A peer's Active claim counts as a referee fault only if it
+arrives after this controller became Active.
 
 ## I/O card indications
 
 - The LED ring shows the output mask set by the Active controller.
-- A distinct pattern (to be fixed in the plan) shows which slot is Active
-  and when no controller is present.
+- All LEDs are off while no slot is Active; every Active change is logged
+  on the console with the gap from the lost slot's last frame.
 
 ## Timing budget
 
