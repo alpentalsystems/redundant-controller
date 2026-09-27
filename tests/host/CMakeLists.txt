@@ -27,3 +27,7 @@ add_test(NAME io_bit COMMAND test_io_bit)
 add_executable(test_mode test_mode.c ${REPO}/io-card/src/mode.c)
 target_include_directories(test_mode PRIVATE ${REPO}/common/include ${REPO}/io-card/src)
 add_test(NAME mode COMMAND test_mode)
+
+add_executable(test_bit test_bit.c ${REPO}/central/src/bit.c)
+target_include_directories(test_bit PRIVATE ${REPO}/central/src)
+add_test(NAME bit COMMAND test_bit)
