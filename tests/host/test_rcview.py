@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import unittest
+import urllib.error
 import urllib.request
 
 sys.dont_write_bytecode = True
@@ -96,6 +97,56 @@ class DataTest(unittest.TestCase):
                                             [5000, 5000, "standby"]])
         self.assertEqual(tl["lanes"]["B"], [[100, 100, "standby"]])
         self.assertEqual(tl["markers"], [[250, "A", "role_changed"]])
+
+
+class ApiTest(unittest.TestCase):
+    def setUp(self):
+        logs = {"A": [rec(1, 100), ev(2, 150, 5), rec(3, 200)],
+                "B": [rec(10, 120, slot=1, role=1), ev(11, 160, 2, 2, slot=1)]}
+        self.server = rcview.make_server(rcview.merge(logs), 0)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = "http://127.0.0.1:%d" % self.server.server_address[1]
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def get(self, path):
+        with urllib.request.urlopen(self.base + path) as r:
+            return r.headers.get_content_type(), r.read().decode()
+
+    def test_page(self):
+        ctype, body = self.get("/")
+        self.assertEqual(ctype, "text/html")
+        self.assertIn("/api/rows", body)
+        self.assertNotIn("__EVENTS__", body)
+
+    def test_segments(self):
+        segs = json.loads(self.get("/api/segments")[1])
+        self.assertEqual(len(segs), 1)
+        self.assertEqual((segs[0]["rows"], segs[0]["io_from"], segs[0]["io_to"]), (5, 100, 200))
+
+    def test_rows_filter_and_page(self):
+        d = json.loads(self.get("/api/rows?seg=0&kind=all&ctl=A&page=0")[1])
+        self.assertEqual(d["total"], 3)
+        self.assertEqual(d["columns"], rcview.COLUMNS)
+        self.assertEqual([r[1] for r in d["rows"]], [1, 2, 3])
+        d = json.loads(self.get("/api/rows?seg=0")[1])  # events only by default
+        self.assertEqual([r[3] for r in d["rows"]], ["referee_lost", "role_changed"])
+
+    def test_timeline(self):
+        tl = json.loads(self.get("/api/timeline?seg=0")[1])
+        self.assertEqual(tl["markers"], [[150, "A", "referee_lost"], [160, "B", "role_changed"]])
+
+    def test_csv(self):
+        ctype, body = self.get("/api/csv?seg=0&kind=all")
+        self.assertEqual(ctype, "text/csv")
+        self.assertEqual(len(body.strip().splitlines()), 1 + 5)
+
+    def test_bad_request(self):
+        with self.assertRaises(urllib.error.HTTPError) as c:
+            urllib.request.urlopen(self.base + "/api/rows?seg=9")
+        self.assertEqual(c.exception.code, 400)
 
 
 if __name__ == "__main__":
