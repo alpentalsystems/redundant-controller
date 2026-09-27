@@ -18,5 +18,11 @@ for h in "${HOSTS[@]}"; do
     sudo systemctl daemon-reload
     sudo systemctl enable --now rc-central.service
     sudo systemctl restart rc-central.service
-    echo "$(hostname): rc-central $(systemctl is-active rc-central)"'
+    sudo install -D -m 644 rc-src/common/rclog.py /usr/local/lib/rc-central/rclog.py
+    sudo install -D -m 755 rc-src/central/rc_logd.py /usr/local/lib/rc-central/rc_logd.py
+    sudo install -m 644 rc-src/central/rc-logd.service /etc/systemd/system/rc-logd.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now rc-logd.service
+    sudo systemctl restart rc-logd.service
+    echo "$(hostname): rc-central $(systemctl is-active rc-central), rc-logd $(systemctl is-active rc-logd)"'
 done

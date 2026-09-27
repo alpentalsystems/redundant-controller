@@ -1,0 +1,13 @@
+[Unit]
+Description=Redundant controller log server
+After=rc-central.service
+
+[Service]
+ExecStart=/usr/bin/python3 -B /usr/local/lib/rc-central/rc_logd.py
+Restart=always
+RestartSec=2
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
