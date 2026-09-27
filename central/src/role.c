@@ -39,6 +39,8 @@ unsigned role_on_status(struct role_state *s, const struct rc_status *m, int64_t
 	s->last_status_ms = now_ms;
 	s->active_slot = m->active_slot;
 	s->io_fail = m->io_fail;
+	s->io_time_ms = m->io_time_ms;
+	s->io_time_valid = true;
 	if (!s->referee_ok) {
 		s->referee_ok = true;
 		ev |= ROLE_EV_REFEREE_BACK;
@@ -192,4 +194,13 @@ int64_t role_take_status_age(struct role_state *s, int64_t now_ms)
 	}
 	s->max_status_gap_ms = 0;
 	return age;
+}
+
+bool role_io_time(const struct role_state *s, int64_t now_ms, uint32_t *io_time_ms)
+{
+	if (!s->io_time_valid) {
+		return false;
+	}
+	*io_time_ms = s->io_time_ms + (uint32_t)(now_ms - s->last_status_ms);
+	return true;
 }

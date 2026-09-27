@@ -47,6 +47,8 @@ struct role_state {
 	uint8_t out_mask;
 	int64_t last_out_ms;
 	int64_t max_status_gap_ms;
+	uint32_t io_time_ms;
+	bool io_time_valid;
 };
 
 void role_init(struct role_state *s, int64_t now_ms);
@@ -76,5 +78,8 @@ uint8_t role_current_mask(const struct role_state *s);
  * check period, whatever the check phase.
  */
 int64_t role_take_status_age(struct role_state *s, int64_t now_ms);
+
+/* I/O card time at now_ms: last STATUS time plus the time since; false before any STATUS. */
+bool role_io_time(const struct role_state *s, int64_t now_ms, uint32_t *io_time_ms);
 
 #endif /* ROLE_H_ */

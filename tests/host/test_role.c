@@ -336,6 +336,22 @@ static void test_status_age_covers_whole_period(void)
 	CHECK(role_take_status_age(&s, 1300) == 310); /* gap still open */
 }
 
+static void test_io_time_estimate(void)
+{
+	struct role_state s;
+	struct rc_status m = status(RC_SLOT_A, RC_ROLE_STANDBY);
+	uint32_t io = 0U;
+
+	role_init(&s, 0);
+	CHECK(!role_io_time(&s, 50, &io));
+	m.io_time_ms = 5000U;
+	(void)role_on_status(&s, &m, 100);
+	CHECK(role_io_time(&s, 130, &io) && (io == 5030U));
+	m.io_time_ms = 0xFFFFFFF0U; /* wraps like the I/O card's 32-bit clock */
+	(void)role_on_status(&s, &m, 200);
+	CHECK(role_io_time(&s, 232, &io) && (io == 0x10U));
+}
+
 int main(void)
 {
 	test_initial_state();
@@ -357,5 +373,6 @@ int main(void)
 	test_mode_change_clears_test_mask();
 	test_status_and_peer_fields_recorded();
 	test_status_age_covers_whole_period();
+	test_io_time_estimate();
 	return CHECK_DONE();
 }
