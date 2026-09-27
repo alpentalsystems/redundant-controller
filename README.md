@@ -9,7 +9,8 @@ Actives.
 
 Write-up (Korean, with an English summary):
 [라즈베리 파이 두 대와 STM32로 이중화(Active/Standby) 제어기 만들기](https://alpentalsystems.com/posts/2026-09-redundant-controller/) (part 1),
-[이중화 제어기 2편: 자체 점검(BIT)으로 '살아 있지만 고장 난' 제어기 잡아내기](https://alpentalsystems.com/posts/2026-09-redundant-controller-bit/) (part 2)
+[이중화 제어기 2편: 자체 점검(BIT)으로 '살아 있지만 고장 난' 제어기 잡아내기](https://alpentalsystems.com/posts/2026-09-redundant-controller-bit/) (part 2),
+[이중화 제어기 3편: 링 버퍼 로그와 Mac 뷰어로 고장 순간 다시 보기](https://alpentalsystems.com/posts/2026-09-redundant-controller-log/) (part 3)
 
 Design: [docs/2026-09-27-redundancy-core-design.md](docs/2026-09-27-redundancy-core-design.md)
 Measurements: [docs/test-log.md](docs/test-log.md)
